@@ -1,0 +1,36 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+build/
+dist/
+
+# SQLite Database
+instance/
+dev.db
+
+# OS files
+.DS_Store
+
+# Claude IDE
+.claude/
+.claudeignore
+
+# Ad-hoc test scripts
+test_azure.py
+test_translation.py
+
+# Docs (kept local only)
+docs/
+
+# Local debug artifacts
+__*.txt
+cookies.txt
+resp.json
+*.log

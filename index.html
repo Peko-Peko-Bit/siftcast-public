@@ -1,0 +1,1798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SiftCast | Live Feed Management</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#4f46e5">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="SiftCast">
+    <link rel="apple-touch-icon" href="/icons/icon-192.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/twemoji@14.0.2/dist/twemoji.min.js" crossorigin="anonymous"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        img.emoji {
+            height: 1em;
+            width: 1em;
+            margin: 0 .05em 0 .1em;
+            vertical-align: -0.1em;
+            display: inline;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #FFFFFF;
+            color: #1F2937;
+        }
+        .audio-player-gradient {
+            background: linear-gradient(90deg, #F9FAFB 0%, #F3F4F6 100%);
+        }
+        .drawer-transition {
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .sidebar-hidden {
+            transform: translateX(-100%);
+        }
+        .sidebar-visible {
+            transform: translateX(0);
+        }
+        .drawer-hidden {
+            transform: translateY(100%);
+        }
+        .drawer-visible {
+            transform: translateY(0);
+        }
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .overlay-bg {
+            background-color: rgba(0, 0, 0, 0.4);
+        }
+    </style>
+</head>
+<body class="pb-20 overflow-x-hidden">
+    <!-- Sidebar Overlay -->
+    <div id="sidebar-overlay" class="fixed inset-0 z-[100] overlay-bg opacity-0 pointer-events-none transition-opacity duration-300"></div>
+
+    <!-- Left Sidebar -->
+    <aside id="left-sidebar" class="fixed top-0 left-0 bottom-0 w-[280px] bg-[#F9FAFB] z-[110] border-r border-gray-200 drawer-transition sidebar-hidden flex flex-col">
+        <div class="px-5 py-6">
+            <h2 class="text-lg font-bold text-gray-900">SiftCast</h2>
+        </div>
+
+        <nav class="flex-grow overflow-y-auto px-2 space-y-5 pb-4">
+            <!-- SETTINGS -->
+            <div>
+                <h3 class="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Settings</h3>
+                <div class="mb-3">
+                    <p class="px-3 text-[11px] text-gray-500 mb-1.5">Language</p>
+                    <div class="px-3 grid grid-cols-2 gap-1.5">
+                        <button data-lang="ja" class="lang-btn py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500">日本語</button>
+                        <button data-lang="en" class="lang-btn py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500">English</button>
+                        <button data-lang="es" class="lang-btn py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500">Español</button>
+                        <button data-lang="ko" class="lang-btn py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500">한국어</button>
+                    </div>
+                </div>
+                <div class="mt-3 mb-1">
+                    <p class="px-3 text-[11px] text-gray-500 mb-1.5">Translation Method</p>
+                    <div class="px-3 flex gap-1.5">
+                        <button id="engine-standard-btn" class="flex-1 py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500">MT</button>
+                        <button id="engine-gemma-btn" class="flex-1 py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500">LLM (Gemma)</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FOLDERS -->
+            <div>
+                <div class="px-3 flex items-center justify-between mb-2">
+                    <h3 class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Folders</h3>
+                    <button onclick="openReorderScreen()" class="owner-only hidden text-[10px] text-indigo-500 font-semibold hover:text-indigo-700">Edit</button>
+                </div>
+                <div id="sidebar-folders" class="space-y-0.5"></div>
+                <button onclick="openFolderEdit(null)" class="owner-only hidden mt-1 w-full flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors text-xs">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    Add Folder
+                </button>
+            </div>
+
+            <!-- FEEDS -->
+            <div>
+                <h3 class="px-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Feeds</h3>
+                <button onclick="openFeedsList()" class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors text-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                    All Feeds
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 ml-auto text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                </button>
+            </div>
+        </nav>
+
+        <div class="mt-auto p-4 border-t border-gray-200">
+            <div class="flex items-center space-x-3 px-2 mb-3">
+                <div class="w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex-shrink-0">
+                    <img id="sidebar-user-avatar" src="" alt="avatar" class="w-full h-full object-cover">
+                </div>
+                <div class="min-w-0">
+                    <p id="sidebar-user-name" class="text-xs font-bold text-gray-900 truncate">Guest</p>
+                    <p id="sidebar-user-email" class="text-[10px] text-gray-500 truncate"></p>
+                </div>
+            </div>
+            <button id="sidebar-login-btn" onclick="window.location='/auth/login'"
+                class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors">
+                Sign in with Google
+            </button>
+            <button id="sidebar-logout-btn" onclick="doLogout()"
+                class="hidden w-full py-2 border border-gray-200 text-gray-500 hover:bg-gray-50 text-xs font-semibold rounded-lg transition-colors">
+                Sign Out
+            </button>
+        </div>
+    </aside>
+
+    <!-- Header & Tabs -->
+    <div class="sticky top-0 z-50 bg-white shadow-sm">
+        <header class="border-b border-gray-50">
+            <div class="px-4 py-3 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <button id="hamburger-btn" class="p-1 hover:bg-gray-100 rounded text-gray-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                    <h1 class="text-xl font-bold tracking-tight text-gray-900">SiftCast</h1>
+                </div>
+                <div class="flex items-center space-x-1">
+                    <button id="translate-btn" class="p-2 hover:bg-gray-100 rounded-full text-gray-500 hover:text-indigo-600 transition-colors" title="Translate">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                        </svg>
+                    </button>
+                    <button id="refresh-btn" class="p-2 hover:bg-gray-100 rounded-full text-gray-500 hover:text-indigo-600 transition-colors" title="Refresh All Feeds">
+                        <svg id="refresh-icon" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="audio-player-gradient px-4 py-2 border-b border-gray-100 flex items-center space-x-3">
+                <button class="bg-indigo-600 text-white p-1 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /></svg></button>
+                <div class="flex-grow min-w-0"><p class="text-xs font-semibold text-gray-800 truncate">Morning Cast</p></div>
+                <span class="text-[10px] text-gray-400">12:34</span>
+            </div>
+        </header>
+        <div class="flex overflow-x-auto no-scrollbar bg-white">
+            <div id="media-tabs" class="flex px-2 space-x-2"></div>
+        </div>
+        <div class="flex items-center justify-end px-4 py-1.5 border-t border-gray-100 bg-white gap-1.5">
+            <button id="view-stacked-btn" onclick="setViewMode('stacked')" class="px-2.5 py-0.5 text-[10px] rounded-full font-semibold bg-indigo-600 text-white">Top</button>
+            <button id="view-bytag-btn" onclick="setViewMode('bytag')" class="px-2.5 py-0.5 text-[10px] rounded-full font-semibold text-gray-400 hover:bg-gray-100">Category</button>
+            <button id="view-latest-btn" onclick="setViewMode('latest')" class="px-2.5 py-0.5 text-[10px] rounded-full font-semibold text-gray-400 hover:bg-gray-100">All</button>
+        </div>
+    </div>
+
+    <main id="news-feed" class="max-w-2xl mx-auto"></main>
+
+    <!-- Bottom Nav -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-6 py-2 flex justify-between z-40">
+        <button class="flex flex-col items-center text-indigo-600"><span class="text-[10px] mt-1">Feed</span></button>
+        <button class="flex flex-col items-center text-gray-400"><span class="text-[10px] mt-1">Saved</span></button>
+        <button class="flex flex-col items-center text-gray-400"><span class="text-[10px] mt-1">Search</span></button>
+    </nav>
+
+    <!-- Insights Drawer -->
+    <div id="drawer-overlay" class="fixed inset-0 z-[60] overlay-bg opacity-0 pointer-events-none transition-opacity duration-300"></div>
+    <div id="insights-drawer" class="fixed bottom-0 left-0 right-0 max-w-2xl mx-auto bg-white rounded-t-2xl z-[70] drawer-transition drawer-hidden h-[85vh] overflow-y-auto">
+        <div class="sticky top-0 bg-white px-4 py-4 border-b flex items-center justify-between">
+            <h2 class="font-bold text-gray-800">Shift Insights</h2>
+            <button id="close-drawer" class="p-1 text-gray-400"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" stroke="currentColor"><path stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+        </div>
+        <div id="drawer-content" class="p-6"></div>
+    </div>
+
+    <!-- Search View -->
+    <div id="search-view" class="fixed inset-0 z-[120] bg-white drawer-transition sidebar-hidden flex flex-col">
+        <div class="sticky top-0 bg-white border-b px-4 py-4 flex items-center space-x-4">
+            <button id="close-search" class="p-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" stroke="currentColor"><path stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg></button>
+            <input id="search-input" type="text" placeholder="Search feeds..." class="flex-grow text-sm border-none focus:ring-0 outline-none">
+        </div>
+        <div class="flex overflow-x-auto no-scrollbar border-b px-4 gap-2 py-2 flex-shrink-0">
+            <button data-cat="" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-indigo-600 bg-indigo-600 text-white font-semibold">All</button>
+            <button data-cat="World" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">World</button>
+            <button data-cat="US News" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">US News</button>
+            <button data-cat="Japan" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">Japan</button>
+            <button data-cat="Technology" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">Tech</button>
+            <button data-cat="AI" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">AI</button>
+            <button data-cat="Business" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">Business</button>
+            <button data-cat="Science" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">Science</button>
+            <button data-cat="Sports" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">Sports</button>
+            <button data-cat="Entertainment" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">Entertainment</button>
+            <button data-cat="Health" class="cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border border-gray-200 text-gray-500">Health</button>
+        </div>
+        <div id="search-results" class="flex-grow overflow-y-auto p-4 space-y-2"></div>
+    </div>
+
+    <!-- Feeds List View (2nd level) -->
+    <div id="feeds-list-view" class="fixed inset-0 z-[125] bg-white drawer-transition sidebar-hidden flex flex-col">
+        <div class="sticky top-0 bg-white border-b px-4 py-4 flex items-center space-x-4">
+            <button onclick="closeFeedsList()" class="p-1 text-gray-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" stroke="currentColor"><path stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg></button>
+            <h2 class="text-base font-bold text-gray-900">Feeds</h2>
+        </div>
+        <div id="feeds-list-content" class="flex-grow overflow-y-auto p-4 space-y-1"></div>
+        <div class="p-4 border-t border-gray-100">
+            <button onclick="openAddContent()" class="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-400 hover:text-indigo-600 hover:border-indigo-400 hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 text-sm font-bold uppercase tracking-wider">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                Add Content
+            </button>
+        </div>
+    </div>
+
+    <!-- Folder Edit View (new / edit) -->
+    <div id="folder-edit-view" class="fixed inset-0 z-[130] bg-white drawer-transition sidebar-hidden flex flex-col">
+        <div class="sticky top-0 bg-white border-b px-4 py-4 flex items-center space-x-4">
+            <button onclick="closeFolderEdit()" class="p-1 text-gray-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" stroke="currentColor"><path stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg></button>
+            <h2 id="folder-edit-title" class="text-base font-bold text-gray-900">New Folder</h2>
+        </div>
+        <div class="flex-grow overflow-y-auto p-4 space-y-6">
+            <div>
+                <label class="text-xs font-semibold text-gray-500 block mb-1.5">Folder Name</label>
+                <input id="folder-name-input" type="text" placeholder="e.g. AI, Spain, Japan…"
+                    class="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-100">
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-500 block mb-1">Sources — Show All Articles</label>
+                <p class="text-[10px] text-gray-400 mb-2">Show all articles from these sources, regardless of tags</p>
+                <div id="folder-sources-list" class="space-y-1 max-h-40 overflow-y-auto border border-gray-100 rounded-xl p-2 bg-gray-50"></div>
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-500 block mb-1">Sources — Filter by Tags</label>
+                <p class="text-[10px] text-gray-400 mb-2">Show only articles from these sources that match the Tags below</p>
+                <div id="folder-tag-sources-list" class="space-y-1 max-h-40 overflow-y-auto border border-gray-100 rounded-xl p-2 bg-gray-50"></div>
+            </div>
+            <div>
+                <label class="text-xs font-semibold text-gray-500 block mb-2">Tags (Category Filter)</label>
+                <div id="folder-category-list" class="grid grid-cols-2 gap-x-2 gap-y-1 border border-gray-100 rounded-xl p-2 bg-gray-50"></div>
+            </div>
+        </div>
+        <div class="p-4 border-t border-gray-100 flex gap-3">
+            <button onclick="saveFolderEdit()" class="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors">Save</button>
+            <button id="folder-delete-btn" onclick="confirmDeleteFolder()" class="px-4 py-2.5 border border-red-200 text-red-500 hover:bg-red-50 text-sm font-semibold rounded-xl transition-colors hidden">Delete</button>
+        </div>
+    </div>
+
+    <!-- Reorder View -->
+    <div id="reorder-view" class="fixed inset-0 z-[130] bg-white drawer-transition sidebar-hidden flex flex-col">
+        <div class="sticky top-0 bg-white border-b px-4 py-4 flex items-center space-x-4">
+            <button onclick="closeReorderScreen()" class="p-1 text-gray-600"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" stroke="currentColor"><path stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg></button>
+            <h2 class="text-base font-bold text-gray-900">Reorder Favorites</h2>
+        </div>
+        <p class="text-xs text-gray-400 px-4 pt-3 pb-1">Drag to reorder</p>
+        <div id="reorder-list" class="flex-grow overflow-y-auto px-4 py-2 space-y-2"></div>
+        <div class="p-4 border-t border-gray-100">
+            <button onclick="saveReorder()" class="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-xl transition-colors">Done</button>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+            ? "http://127.0.0.1:5001/api"
+            : "/api";
+        const hamburgerBtn = document.getElementById('hamburger-btn');
+        const sidebar = document.getElementById('left-sidebar');
+        const sidebarOverlay = document.getElementById('sidebar-overlay');
+        const searchView = document.getElementById('search-view');
+        const closeSearch = document.getElementById('close-search');
+        const searchInput = document.getElementById('search-input');
+        const searchResults = document.getElementById('search-results');
+        const tabsContainer = document.getElementById('media-tabs');
+        const feedContainer = document.getElementById('news-feed');
+        const insightsDrawer = document.getElementById('insights-drawer');
+        const drawerOverlay = document.getElementById('drawer-overlay');
+        const closeInsightsBtn = document.getElementById('close-drawer');
+        const drawerContent = document.getElementById('drawer-content');
+
+        let authState = { authenticated: false, is_owner: false };
+        let activeTabId = null;
+        let folders = [];
+        let editingFolderId = null;
+        let reorderDragSrc = null;
+        let allMasterFeeds = [];
+        let activeCatFilter = '';
+        let currentArticles = [];
+        let currentStacks = null; // non-null when featured tab is showing stacked view
+        let currentByTagData = null;
+        let viewMode = 'stacked'; // 'stacked' | 'latest' | 'bytag'
+        let pollingTimers = [];
+        let translationEnabled = localStorage.getItem('translation_enabled') === 'true';
+        let preferredLang = localStorage.getItem('preferred_lang') || 'en';
+        let activeDrawerApplyTranslation = null;
+        let titleTranslationInFlight = false;
+        const titleCache = new Map(); // articleId → translatedTitle (cleared only on lang change)
+        const feedArticleCache = new Map(); // cacheKey → { articles, ts } (5-min client-side TTL)
+        const FEED_TTL = 5 * 60 * 1000;
+        let lastFetchTime = 0;
+        let currentFetchController = null; // 修正3: 前のフェッチをキャンセルするためのAbortController
+
+        // --- Sidebar & Navigation ---
+        function toggleSidebar(show) {
+            sidebar.classList.toggle('sidebar-hidden', !show);
+            sidebar.classList.toggle('sidebar-visible', show);
+            sidebarOverlay.classList.toggle('opacity-100', show);
+            sidebarOverlay.classList.toggle('pointer-events-none', !show);
+            document.body.style.overflow = show ? 'hidden' : '';
+        }
+        hamburgerBtn.addEventListener('click', () => toggleSidebar(true));
+        sidebarOverlay.addEventListener('click', () => toggleSidebar(false));
+
+        // --- Refresh ---
+        const refreshBtn = document.getElementById('refresh-btn');
+        const refreshIcon = document.getElementById('refresh-icon');
+        let isRefreshing = false;
+
+        function refetchActiveTab() {
+            feedArticleCache.delete(activeTabId === 'featured' ? 'featured' : activeTabId);
+            if (activeTabId === 'featured') {
+                fetchFeaturedNews();
+            } else if (String(activeTabId).startsWith('folder-')) {
+                const fid = parseInt(activeTabId.replace('folder-', ''));
+                fetchFolderArticles(fid);
+            } else {
+                fetchNews(activeTabId);
+            }
+        }
+
+        refreshBtn.addEventListener('click', async () => {
+            if (isRefreshing) return;
+            isRefreshing = true;
+            refreshIcon.classList.add('animate-spin');
+            try {
+                let prevRefreshed = null;
+                try {
+                    const st = await fetch(`${API_BASE}/refresh/status`);
+                    prevRefreshed = (await st.json()).last_refreshed;
+                } catch (e) { /* status unavailable: fall through to plain refetch */ }
+
+                const res = await fetch(`${API_BASE}/refresh`, { method: 'POST', credentials: 'include' });
+                if (res.ok) {
+                    // Owner: wait until the background refresh cycle completes (max 60s)
+                    const deadline = Date.now() + 60 * 1000;
+                    while (Date.now() < deadline) {
+                        await new Promise(r => setTimeout(r, 2500));
+                        try {
+                            const st = await fetch(`${API_BASE}/refresh/status`);
+                            const data = await st.json();
+                            if (data.last_refreshed && data.last_refreshed !== prevRefreshed && !data.running) break;
+                        } catch (e) { /* transient poll error: keep waiting */ }
+                    }
+                }
+                // Non-owner (403) or any error: fall through to immediate refetch (previous behavior)
+            } catch (e) { console.error(e); }
+            refreshIcon.classList.remove('animate-spin');
+            isRefreshing = false;
+            refetchActiveTab();
+        });
+
+        // --- Translation Toggle ---
+        const translateBtn = document.getElementById('translate-btn');
+
+        function updateTranslateBtn() {
+            if (translationEnabled) {
+                translateBtn.className = 'p-2 bg-indigo-100 rounded-full text-indigo-600 transition-colors';
+            } else {
+                translateBtn.className = 'p-2 hover:bg-gray-100 rounded-full text-gray-500 hover:text-indigo-600 transition-colors';
+            }
+        }
+
+        translateBtn.addEventListener('click', () => {
+            translationEnabled = !translationEnabled;
+            localStorage.setItem('translation_enabled', translationEnabled);
+            updateTranslateBtn();
+            applyOrClearTitleTranslation();
+            if (activeDrawerApplyTranslation) activeDrawerApplyTranslation();
+        });
+
+        // --- Title Translation ---
+        async function fetchAndApplyTitleTranslation() {
+            if (!translationEnabled || !currentArticles.length) return;
+            if (titleTranslationInFlight) return;
+
+            // Only fetch titles not yet in cache
+            const toTranslate = currentArticles
+                .filter(a => !titleCache.has(a.id))
+                .map(a => ({ id: a.id, title: a.title }));
+
+            if (toTranslate.length) {
+                titleTranslationInFlight = true;
+                try {
+                    const res = await fetch(`${API_BASE}/translate-titles`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ titles: toTranslate, target_lang: preferredLang })
+                    });
+                    const data = await res.json();
+                    Object.entries(data).forEach(([id, title]) => titleCache.set(Number(id), title));
+                } catch (e) {
+                    console.error('Title translation failed:', e);
+                } finally {
+                    titleTranslationInFlight = false;
+                }
+            }
+
+            patchTitleDom();
+        }
+
+        function patchTitleDom() {
+            document.querySelectorAll('[data-article-id]').forEach(el => {
+                const id = Number(el.dataset.articleId);
+                const article = currentArticles.find(a => a.id === id);
+                if (!article) return;
+                el.textContent = (translationEnabled && titleCache.has(id)) ? titleCache.get(id) : article.title;
+            });
+        }
+
+        function applyOrClearTitleTranslation() {
+            if (translationEnabled) {
+                fetchAndApplyTitleTranslation();
+            } else {
+                patchTitleDom();
+            }
+        }
+
+
+        // --- Translation Engine Selector ---
+        let translationEngine = localStorage.getItem('translationEngine') || 'auto';
+
+        function updateEngineButtons(engine) {
+            const active   = 'flex-1 py-1.5 text-[11px] rounded-lg border border-indigo-500 text-indigo-600 bg-indigo-50 font-medium';
+            const inactive = 'flex-1 py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500';
+            document.getElementById('engine-standard-btn').className = engine === 'gemma' ? inactive : active;
+            document.getElementById('engine-gemma-btn').className    = engine === 'gemma' ? active : inactive;
+        }
+
+        document.getElementById('engine-standard-btn').addEventListener('click', () => {
+            translationEngine = 'auto';
+            localStorage.setItem('translationEngine', 'auto');
+            updateEngineButtons('auto');
+        });
+
+        document.getElementById('engine-gemma-btn').addEventListener('click', () => {
+            translationEngine = 'gemma';
+            localStorage.setItem('translationEngine', 'gemma');
+            updateEngineButtons('gemma');
+        });
+
+        // --- Language Selector ---
+        function updateLangBtns() {
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                if (btn.dataset.lang === preferredLang) {
+                    btn.className = 'lang-btn py-1.5 text-[11px] rounded-lg border border-indigo-500 text-indigo-600 bg-indigo-50 font-medium';
+                } else {
+                    btn.className = 'lang-btn py-1.5 text-[11px] rounded-lg border border-gray-200 text-gray-500';
+                }
+            });
+        }
+
+        document.querySelectorAll('.lang-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                preferredLang = btn.dataset.lang;
+                localStorage.setItem('preferred_lang', preferredLang);
+                updateLangBtns();
+                titleCache.clear();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+                if (activeDrawerApplyTranslation && translationEnabled) {
+                    activeDrawerApplyTranslation(true);
+                }
+            });
+        });
+
+        // --- API Integration ---
+
+        async function fetchNews(feedId) {
+            const cached = feedArticleCache.get(feedId);
+            if (cached && Date.now() - cached.ts < FEED_TTL) {
+                currentArticles = cached.articles;
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+                return;
+            }
+
+            // Skeleton Loader
+            feedContainer.innerHTML = Array(4).fill(0).map(() => `
+                <div class="p-4 flex gap-4 border-b border-gray-50 animate-pulse">
+                    <div class="flex-grow">
+                        <div class="h-3 bg-gray-100 rounded w-1/4 mb-2"></div>
+                        <div class="h-4 bg-gray-100 rounded w-3/4 mb-1"></div>
+                        <div class="h-4 bg-gray-100 rounded w-1/2"></div>
+                    </div>
+                    <div class="w-[60px] h-[60px] bg-gray-100 rounded-lg"></div>
+                </div>
+            `).join('');
+
+            try {
+                const res = await fetch(`${API_BASE}/news/${feedId}`);
+                const data = await res.json();
+                currentArticles = data.articles.map(a => ({ ...a, source: data.source }));
+                feedArticleCache.set(feedId, { articles: currentArticles, ts: Date.now() });
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+            } catch (e) {
+                console.error(e);
+                alert("News fetch error: " + e.message);
+                feedContainer.innerHTML = `<div class="p-10 text-center text-red-400 text-xs">Failed to load news. (${e.message})</div>`;
+            }
+        }
+
+        function filteredFeeds() {
+            const q = searchInput.value.toLowerCase();
+            return allMasterFeeds.filter(f =>
+                (!activeCatFilter || f.category === activeCatFilter) &&
+                (!q || f.name.toLowerCase().includes(q))
+            );
+        }
+
+        async function search(q) {
+            if (allMasterFeeds.length === 0) {
+                const res = await fetch(`${API_BASE}/search?q=`);
+                allMasterFeeds = await res.json();
+            }
+            renderSearchResults(filteredFeeds());
+        }
+
+
+        // --- Rendering ---
+        function renderSidebarFolders() {
+            const el = document.getElementById('sidebar-folders');
+            if (!el) return;
+            if (!folders.length) {
+                el.innerHTML = '<p class="px-3 text-xs text-gray-400 py-1">No folders yet</p>';
+                return;
+            }
+            el.innerHTML = folders.map(f => {
+                const starCls = f.is_favorite ? 'text-yellow-400' : 'text-gray-300 hover:text-yellow-400';
+                const ownerHidden = authState.is_owner ? '' : 'hidden';
+                return `
+                <div class="group flex items-center w-full rounded-lg hover:bg-gray-100 transition-colors pr-1">
+                    <button onclick="toggleFolderFavorite(${f.id})" class="owner-only ${ownerHidden} flex-shrink-0 w-7 h-8 flex items-center justify-center ${starCls} transition-colors" title="Toggle Favorite">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                    </button>
+                    <button onclick="openFolderEdit(${f.id})" class="owner-only ${ownerHidden} flex-grow text-left py-1.5 text-sm text-gray-700 truncate">${twemoji.parse(f.name)}</button>
+                </div>`;
+            }).join('');
+        }
+
+        function renderTabs() {
+            const tab = (id, label) => {
+                const active = activeTabId === id;
+                return `<button onclick="switchTab('${id}')" class="flex-shrink-0 px-4 py-3 text-sm font-semibold relative ${active ? 'text-indigo-600' : 'text-gray-400'}">${label}${active ? '<div class="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600 rounded-full"></div>' : ''}</button>`;
+            };
+            const favFolders = folders.filter(f => f.is_favorite).sort((a, b) => a.sort_order - b.sort_order);
+            tabsContainer.innerHTML = tab('featured', 'Latest News') + favFolders.map(f => tab(`folder-${f.id}`, twemoji.parse(f.name))).join('');
+        }
+
+        function switchTab(id) {
+            pollingTimers.forEach(clearInterval);
+            pollingTimers = [];
+            activeTabId = id;
+            currentByTagData = null;
+            renderTabs();
+            const byTagBtn = document.getElementById('view-bytag-btn');
+            const isFolderTab = String(id).startsWith('folder-');
+            if (id === 'featured' || isFolderTab) {
+                if (byTagBtn) byTagBtn.classList.remove('hidden');
+            } else {
+                if (byTagBtn) byTagBtn.classList.add('hidden');
+                if (viewMode === 'bytag') {
+                    viewMode = 'stacked';
+                    const active   = 'px-2.5 py-0.5 text-[10px] rounded-full font-semibold bg-indigo-600 text-white';
+                    const inactive = 'px-2.5 py-0.5 text-[10px] rounded-full font-semibold text-gray-400 hover:bg-gray-100';
+                    document.getElementById('view-stacked-btn').className = active;
+                    document.getElementById('view-latest-btn').className  = inactive;
+                }
+            }
+            if (id === 'featured') {
+                fetchFeaturedNews();
+            } else if (isFolderTab) {
+                const fid = parseInt(id.replace('folder-', ''));
+                if (viewMode === 'bytag') {
+                    fetchFolderByTagData(fid);
+                } else {
+                    fetchFolderArticles(fid);
+                }
+            } else {
+                fetchNews(id);
+            }
+        }
+
+        async function fetchFeaturedNews() {
+            // 修正3: 前のフェッチをキャンセル
+            if (currentFetchController) currentFetchController.abort();
+            currentFetchController = new AbortController();
+            const { signal } = currentFetchController;
+
+            const cacheKey = 'featured';
+            const cached = feedArticleCache.get(cacheKey);
+            currentByTagData = null;
+            if (cached && Date.now() - cached.ts < FEED_TTL) {
+                currentStacks = cached.stacks;
+                currentArticles = cached.articles;
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+                return;
+            }
+
+            feedContainer.innerHTML = Array(4).fill(0).map(() => `
+                <div class="p-4 flex gap-4 border-b border-gray-50 animate-pulse">
+                    <div class="flex-grow">
+                        <div class="h-3 bg-gray-100 rounded w-1/4 mb-2"></div>
+                        <div class="h-4 bg-gray-100 rounded w-3/4 mb-1"></div>
+                        <div class="h-4 bg-gray-100 rounded w-1/2"></div>
+                    </div>
+                    <div class="w-[60px] h-[60px] bg-gray-100 rounded-lg"></div>
+                </div>
+            `).join('');
+            try {
+                const res = await fetch(`${API_BASE}/news/stacked`, { signal });
+                const stacks = await res.json(); // [{score, main, related}, ...]
+                currentStacks = stacks;
+                currentArticles = stacks.flatMap(s => [s.main, ...s.related]);
+                if (currentArticles.length > 0) {
+                    feedArticleCache.set(cacheKey, { stacks: currentStacks, articles: currentArticles, ts: Date.now() });
+                }
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+            } catch (e) {
+                if (e.name === 'AbortError') return;
+                console.error(e);
+                feedContainer.innerHTML = `<div class="p-10 text-center text-red-400 text-xs">Failed to load featured news. (${e.message})</div>`;
+            }
+        }
+
+        const SPARKLE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none" class="inline-block shrink-0"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>`;
+
+        const INSIGHTS_BADGE_READY   = 'inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full transition-colors bg-purple-100 text-purple-700';
+        const INSIGHTS_BADGE_PENDING = 'inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full transition-colors text-gray-300 animate-pulse';
+
+        function insightsBadgeHtml(item) {
+            const cls = item.ai_insights ? INSIGHTS_BADGE_READY : INSIGHTS_BADGE_PENDING;
+            return `<span id="insights-badge-${item.id}" class="${cls}">${SPARKLE_SVG}Insights</span>`;
+        }
+
+        const CATEGORY_COLOR_MAP = {
+            Politics:      'bg-gray-100 text-gray-600',
+            Society:       'bg-gray-100 text-gray-600',
+            Regional:      'bg-gray-100 text-gray-600',
+            Business:      'bg-green-100 text-green-700',
+            Economy:       'bg-green-100 text-green-700',
+            Technology:    'bg-blue-100 text-blue-700',
+            Science:       'bg-blue-100 text-blue-700',
+            Health:        'bg-teal-100 text-teal-700',
+            Environment:   'bg-teal-100 text-teal-700',
+            Conflict:      'bg-red-100 text-red-700',
+            Crime:         'bg-red-100 text-red-700',
+            Education:     'bg-amber-100 text-amber-700',
+            Sports:        'bg-amber-100 text-amber-700',
+            Entertainment: 'bg-amber-100 text-amber-700',
+        };
+
+        function categoryBadge(item) {
+            if (!item.category_tag) {
+                return `<span id="tag-${item.id}" class="text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded animate-pulse">Analyzing…</span>`;
+            }
+            const color = CATEGORY_COLOR_MAP[item.category_tag] ?? 'bg-gray-100 text-gray-400';
+            return `<span id="tag-${item.id}" class="text-[10px] font-semibold ${color} px-1.5 py-0.5 rounded">${item.category_tag}</span>`;
+        }
+
+        function topicTagsHtml(item) {
+            if (!item.topic_tags || item.topic_tags.length === 0) return '';
+            return item.topic_tags.map(t =>
+                `<span data-topic="${item.id}" class="text-[10px] text-gray-400">${t}</span>`
+            ).join('');
+        }
+
+        function shortenSource(name) {
+            if (!name) return '';
+            const trimmed = name.split(/[-,]/)[0].trim();
+            if (trimmed.includes(' ')) return trimmed.split(' ').slice(0, 2).join(' ');
+            return trimmed.length > 12 ? trimmed.slice(0, 12) + '…' : trimmed;
+        }
+
+        function renderTopicTags(topics) {
+            if (!topics || topics.length === 0) return '';
+            const visible = topics.slice(0, 2);
+            const rest = topics.length - visible.length;
+            return [
+                ...visible.map(t => `<span class="text-[10px] text-gray-400">${t}</span>`),
+                rest > 0 ? `<span class="text-[10px] text-gray-400">+${rest}</span>` : ''
+            ].join('');
+        }
+
+        function relativeTime(isoString) {
+            if (!isoString) return '';
+            const mins = Math.floor((Date.now() - new Date(isoString).getTime()) / 60000);
+            if (mins < 60) return `${mins}m`;
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return `${hours}h`;
+            return `${Math.floor(hours / 24)}d`;
+        }
+
+        function formatBarcelonaTime(iso) {
+            if (!iso) return '—';
+            return new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Europe/Madrid',
+                day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit',
+                timeZoneName: 'short'
+            }).format(new Date(iso));
+        }
+
+        function articleCardHtml(item) {
+            const title = (translationEnabled && titleCache.has(item.id)) ? titleCache.get(item.id) : item.title;
+            return `
+                <div class="px-2 py-1.5 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors" onclick="openInsights(${item.id})">
+                    <div class="flex items-center gap-1 overflow-hidden whitespace-nowrap mb-1">
+                        ${categoryBadge(item)}
+                        <span id="topic-row-${item.id}" class="contents">${renderTopicTags(item.topic_tags)}</span>
+                        <span class="text-gray-300 text-xs flex-shrink-0">·</span>
+                        <span class="text-purple-400 text-xs flex-shrink-0" style="pointer-events:none;">✦</span>
+                        <span class="text-gray-400 text-xs truncate flex-1 min-w-0">${shortenSource(item.source)} · ${relativeTime(item.published_at)}</span>
+                    </div>
+                    <div class="flex gap-2 items-start">
+                        <h3 data-article-id="${item.id}" class="text-sm font-semibold leading-snug ${item.read ? 'text-gray-400' : 'text-gray-900'} line-clamp-2 flex-1">${title}</h3>
+                        ${item.thumbnail_url
+                            ? `<img src="${item.thumbnail_url}" class="w-16 h-12 object-cover rounded flex-shrink-0 self-start" loading="lazy" onerror="this.parentElement.querySelector('.thumb-placeholder').style.display='flex';this.style.display='none'">`
+                            : ''}
+                        <div class="thumb-placeholder w-16 h-12 bg-gray-100 rounded flex-shrink-0 self-start flex flex-col items-center justify-center gap-1 px-1 ${item.thumbnail_url ? 'hidden' : ''}">
+                            <span class="text-[9px] text-gray-400 font-medium text-center line-clamp-2 leading-tight">${item.category_tag || ''}</span>
+                            <span class="text-[8px] text-gray-300 text-center line-clamp-2 leading-tight">${item.source || ''}</span>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        function stackCardHtml(main, related, opts = {}) {
+            const { showCategoryTag = true, extraShadow = false } = opts;
+            const title = (translationEnabled && titleCache.has(main.id)) ? titleCache.get(main.id) : main.title;
+            const hasRelated = related.length > 0;
+            const cardOnclick = hasRelated ? `toggleStack(${main.id})` : `openInsights(${main.id})`;
+            const shadowLayers = hasRelated ? `
+                ${extraShadow ? `<div class="absolute left-4 right-4 rounded-xl bg-gray-300" style="height:100%;top:12px;z-index:0"></div>` : ''}
+                <div class="absolute left-3 right-3 rounded-xl bg-gray-200" style="height:100%;top:8px;z-index:1"></div>
+                <div class="absolute left-1.5 right-1.5 rounded-xl bg-gray-100 border border-gray-200" style="height:100%;top:4px;z-index:2"></div>` : '';
+
+            // A: 過半数ルールで共通タグを抽出
+            const allArticles = [main, ...related];
+            const tagCounts = {};
+            allArticles.forEach(a => (a.topic_tags || []).forEach(t => {
+                const k = t.toLowerCase(); tagCounts[k] = (tagCounts[k] || 0) + 1;
+            }));
+            const majority = Math.ceil(allArticles.length / 2);
+            const mainTagByLower = {};
+            (main.topic_tags || []).forEach(t => { mainTagByLower[t.toLowerCase()] = t; });
+            const commonTagKeys = Object.entries(tagCounts)
+                .filter(([, c]) => c >= majority).map(([k]) => k);
+            const commonKeySet = new Set(commonTagKeys);
+
+            // 共通タグヘッダー（グループあり時のみ）
+            const commonTagsHeaderHtml = (hasRelated && commonTagKeys.length > 0) ? `
+                <div class="flex flex-wrap items-center gap-1 mb-1.5">
+                    <span class="text-[9px] text-indigo-400 font-semibold uppercase tracking-wide">Topic</span>
+                    ${commonTagKeys.map(k => {
+                        const label = mainTagByLower[k] || k;
+                        return `<span class="text-[9px] bg-indigo-200 text-indigo-800 px-1.5 py-0.5 rounded font-semibold">${label}</span>`;
+                    }).join('')}
+                </div>` : '';
+
+            // メイン記事の非共通タグ（共通タグヘッダーに出ていないもの）
+            const mainNonCommonTagsHtml = hasRelated
+                ? (main.topic_tags || [])
+                    .filter(t => !commonKeySet.has(t.toLowerCase()))
+                    .map(t => `<span data-topic="${main.id}" class="text-[10px] text-gray-400">${t}</span>`)
+                    .join('')
+                : topicTagsHtml(main);
+
+            // B: 関連記事行（connecting line 用ドット付き）
+            const mainTagSet = new Set((main.topic_tags || []).map(t => t.toLowerCase()));
+            const relatedRows = related.map(rel => {
+                const relTitle = (translationEnabled && titleCache.has(rel.id)) ? titleCache.get(rel.id) : rel.title;
+                // 共通ヘッダーに出ていないが main と共通のタグを表示（追加の文脈）
+                const extraTagsHtml = (rel.topic_tags || [])
+                    .filter(t => mainTagSet.has(t.toLowerCase()) && !commonKeySet.has(t.toLowerCase()))
+                    .map(t => `<span class="text-[9px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium">${t}</span>`)
+                    .join('');
+                return `<div class="flex items-start gap-2 px-4 py-2.5 border-t border-gray-100 cursor-pointer hover:bg-indigo-100 transition-colors" onclick="event.stopPropagation();openInsights(${rel.id})">
+                    <div class="mt-1.5 w-2.5 h-2.5 rounded-full bg-indigo-200 ring-2 ring-white flex-shrink-0 relative z-10"></div>
+                    <div class="flex-grow min-w-0">
+                        <div class="flex flex-wrap items-center gap-1 mb-1">
+                            ${showCategoryTag ? categoryBadge(rel) : ''}
+                            <span onclick="event.stopPropagation();openInsights(${rel.id})">${insightsBadgeHtml(rel)}</span>
+                            ${extraTagsHtml}
+                        </div>
+                        <p data-article-id="${rel.id}" class="text-[12px] font-medium text-gray-700 line-clamp-2 leading-snug mb-0.5">${relTitle}</p>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] text-gray-400 font-semibold">${rel.source || ''}</span>
+                            <span class="text-[10px] text-gray-400">${relativeTime(rel.published_at)}</span>
+                        </div>
+                    </div>
+                    ${rel.thumbnail_url ? `<img src="${rel.thumbnail_url}" class="w-[44px] h-[33px] object-cover rounded flex-shrink-0 self-start mt-1" loading="lazy">` : ''}
+                </div>`;
+            }).join('');
+
+            // アコーディオン: 絶対配置の縦線（left-[21px]）＋各行のドット（px-4=16px + w-2.5/2=5px = 21px）
+            const accordionHtml = hasRelated ? `
+                <div id="stack-related-${main.id}" style="max-height:0;overflow:hidden;transition:max-height 0.3s ease-out">
+                    <div class="relative">
+                        <div class="absolute left-[21px] top-0 bottom-0 w-px bg-indigo-100 pointer-events-none"></div>
+                        ${relatedRows}
+                    </div>
+                </div>` : '';
+
+            return `
+                <div class="relative px-3 pt-1 mb-2" style="padding-bottom:${hasRelated ? '10' : '0'}px">
+                    ${shadowLayers}
+                    <div class="relative rounded-xl border border-gray-100 ${hasRelated ? 'bg-indigo-50 border-l-4 border-l-indigo-400' : 'bg-white'} overflow-hidden cursor-pointer" style="z-index:3" onclick="${cardOnclick}">
+                        <div class="px-4 py-1.5">
+                            <div class="flex items-center gap-1 overflow-hidden whitespace-nowrap mb-1">
+                                ${showCategoryTag ? categoryBadge(main) : ''}
+                                <span id="topic-row-${main.id}" class="contents">${renderTopicTags(main.topic_tags)}</span>
+                                <span class="text-gray-300 text-xs flex-shrink-0">·</span>
+                                <span class="text-purple-400 text-xs flex-shrink-0" style="pointer-events:none;">✦</span>
+                                <span class="text-gray-400 text-xs truncate flex-1 min-w-0">${shortenSource(main.source)} · ${relativeTime(main.published_at)}</span>
+                                ${hasRelated ? `<span class="text-[10px] font-semibold bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full flex-shrink-0">+${related.length} more</span>` : ''}
+                            </div>
+                            <div class="flex gap-2 items-start">
+                                <h3 data-article-id="${main.id}" class="text-sm font-semibold leading-snug ${main.read ? 'text-gray-400' : 'text-gray-900'} line-clamp-2 flex-1">${title}</h3>
+                                ${main.thumbnail_url
+                                    ? `<img src="${main.thumbnail_url}" class="w-16 h-12 object-cover rounded flex-shrink-0 self-start" loading="lazy">`
+                                    : `<div class="w-16 h-12 bg-gray-100 rounded flex-shrink-0 self-start flex flex-col items-center justify-center gap-1 px-1">
+                                        <span class="text-[9px] text-gray-400 font-medium text-center line-clamp-2 leading-tight">${main.category_tag || ''}</span>
+                                        <span class="text-[8px] text-gray-300 text-center line-clamp-2 leading-tight">${main.source || ''}</span>
+                                       </div>`}
+                            </div>
+                        </div>
+                        ${accordionHtml}
+                    </div>
+                </div>`;
+        }
+
+        function toggleStack(mainId) {
+            const el = document.getElementById(`stack-related-${mainId}`);
+            if (!el) return;
+            el.style.maxHeight = (el.style.maxHeight && el.style.maxHeight !== '0px') ? '0px' : el.scrollHeight + 'px';
+        }
+
+        async function fetchByTagData() {
+            feedContainer.innerHTML = Array(3).fill(0).map(() => `
+                <div class="p-4 border-b border-gray-50 animate-pulse">
+                    <div class="h-3 bg-gray-100 rounded w-1/4 mb-2"></div>
+                    <div class="h-4 bg-gray-100 rounded w-3/4"></div>
+                </div>`).join('');
+            try {
+                const res = await fetch(`${API_BASE}/news/by-tag`);
+                currentByTagData = await res.json();
+                currentArticles = currentByTagData.flatMap(tg => tg.stacks.flatMap(s => [s.main, ...s.related]));
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+            } catch (e) {
+                console.error(e);
+                feedContainer.innerHTML = `<p class="text-center text-gray-400 text-sm pt-10">Failed to load</p>`;
+            }
+        }
+
+        async function fetchFolderByTagData(folderId) {
+            feedContainer.innerHTML = Array(3).fill(0).map(() => `
+                <div class="p-4 border-b border-gray-50 animate-pulse">
+                    <div class="h-3 bg-gray-100 rounded w-1/4 mb-2"></div>
+                    <div class="h-4 bg-gray-100 rounded w-3/4"></div>
+                </div>`).join('');
+            try {
+                const res = await fetch(`${API_BASE}/folders/${folderId}/by-tag`);
+                currentByTagData = await res.json();
+                currentArticles = currentByTagData.flatMap(tg => tg.stacks.flatMap(s => [s.main, ...s.related]));
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+            } catch (e) {
+                console.error(e);
+                feedContainer.innerHTML = `<p class="text-center text-gray-400 text-sm pt-10">Failed to load</p>`;
+            }
+        }
+
+        function toggleTagSection(tagId) {
+            const content = document.getElementById(`${tagId}-content`);
+            const chevron = document.getElementById(`${tagId}-chevron`);
+            if (!content) return;
+            const isOpen = parseInt(content.style.maxHeight) > 0;
+            if (isOpen) {
+                content.style.maxHeight = '0px';
+                if (chevron) chevron.style.transform = '';
+            } else {
+                content.style.maxHeight = content.scrollHeight + 'px';
+                if (chevron) chevron.style.transform = 'rotate(90deg)';
+            }
+        }
+
+        function showMoreStacks(tagId) {
+            const moreContent = document.getElementById(`${tagId}-more-content`);
+            moreContent?.classList.remove('hidden');
+            document.getElementById(`${tagId}-more-btn`)?.remove();
+            const tagContent = document.getElementById(`${tagId}-content`);
+            if (tagContent) tagContent.style.maxHeight = tagContent.scrollHeight + 'px';
+        }
+
+        function renderByTagFeed() {
+            if (!currentByTagData || currentByTagData.length === 0) {
+                feedContainer.innerHTML = `<p class="text-center text-gray-400 text-sm pt-10">No articles found</p>`;
+                return;
+            }
+            const INITIAL = 5;
+            feedContainer.innerHTML = currentByTagData.map((tg, i) => {
+                const tagId = `bytag-${i}`;
+                const emoji = CATEGORY_EMOJI[tg.tag] || '📰';
+                const topTopics = getTopTopics(tg.stacks, 5);
+                const topicsHtml = topTopics.map(t =>
+                    `<span class="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded whitespace-nowrap">${t}</span>`
+                ).join('');
+                const initial = tg.stacks.slice(0, INITIAL);
+                const more    = tg.stacks.slice(INITIAL);
+                const cardsHtml = initial.map(({ main, related }) =>
+                    stackCardHtml(main, related, { showCategoryTag: false, extraShadow: true })).join('');
+                const moreHtml = more.length > 0 ? `
+                    <button id="${tagId}-more-btn" onclick="showMoreStacks('${tagId}')"
+                        class="w-full text-left px-5 py-2 text-[11px] text-indigo-500 hover:text-indigo-700 font-medium">
+                        Show ${more.length} more ›
+                    </button>
+                    <div id="${tagId}-more-content" class="hidden">
+                        ${more.map(({ main, related }) => stackCardHtml(main, related, { showCategoryTag: false, extraShadow: true })).join('')}
+                    </div>` : '';
+                return `
+                <div>
+                    <button onclick="toggleTagSection('${tagId}')"
+                        class="sticky top-40 z-10 w-full flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-100 text-left hover:bg-gray-50 transition-colors shadow-sm"
+                        style="border-left:4px solid #6366f1">
+                        <span class="text-lg leading-none flex-shrink-0">${emoji}</span>
+                        <span class="text-sm font-bold text-gray-900 flex-shrink-0">${tg.tag}</span>
+                        ${topicsHtml ? `
+                        <div class="flex-1 min-w-0 flex items-center gap-1 overflow-hidden"
+                            style="-webkit-mask-image:linear-gradient(to right,black 70%,transparent);mask-image:linear-gradient(to right,black 70%,transparent)">
+                            ${topicsHtml}
+                        </div>` : `<div class="flex-1"></div>`}
+                        <div class="flex items-center gap-2 flex-shrink-0">
+                            <span class="text-[11px] text-gray-400">${tg.count} topics</span>
+                            <svg id="${tagId}-chevron" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="transition:transform 0.2s">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                            </svg>
+                        </div>
+                    </button>
+                    <div id="${tagId}-content" style="max-height:0;overflow:hidden;transition:max-height 0.3s ease">
+                        <div class="ml-4 border-l-2 border-indigo-100 pl-1">
+                            ${cardsHtml}${moreHtml}
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function setViewMode(mode) {
+            viewMode = mode;
+            const active   = 'px-2.5 py-0.5 text-[10px] rounded-full font-semibold bg-indigo-600 text-white';
+            const inactive = 'px-2.5 py-0.5 text-[10px] rounded-full font-semibold text-gray-400 hover:bg-gray-100';
+            document.getElementById('view-stacked-btn').className = mode === 'stacked' ? active : inactive;
+            document.getElementById('view-latest-btn').className  = mode === 'latest'  ? active : inactive;
+            document.getElementById('view-bytag-btn').className   = mode === 'bytag'   ? active : inactive;
+            if (mode === 'bytag' && !currentByTagData) {
+                if (String(activeTabId).startsWith('folder-')) {
+                    fetchFolderByTagData(parseInt(activeTabId.replace('folder-', '')));
+                } else {
+                    fetchByTagData();
+                }
+                return;
+            }
+            renderFeed();
+        }
+
+        function renderFeed() {
+            // Stop any previous polling
+            pollingTimers.forEach(clearInterval);
+            pollingTimers = [];
+
+            if (viewMode === 'bytag' && currentByTagData !== null) {
+                renderByTagFeed();
+            } else if (viewMode === 'stacked' && currentStacks !== null) {
+                feedContainer.innerHTML = currentStacks.map(({ main, related }) => stackCardHtml(main, related)).join('');
+            } else {
+                const sorted = [...currentArticles].sort((a, b) =>
+                    (b.published_at ? new Date(b.published_at) : 0) - (a.published_at ? new Date(a.published_at) : 0)
+                );
+                feedContainer.innerHTML = sorted.slice(0, 30).map(item => articleCardHtml(item)).join('');
+            }
+
+            // Poll insights badge for articles without insights (give up after ~5 min;
+            // the periodic server-side backfill usually fills gaps within one cycle)
+            currentArticles.filter(a => !a.ai_insights).forEach(item => {
+                let attempts = 0;
+                const timer = setInterval(async () => {
+                    if (++attempts > 60) {
+                        clearInterval(timer);
+                        pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`${API_BASE}/insights/${item.id}`);
+                        const data = await res.json();
+                        if (data.ready) {
+                            clearInterval(timer);
+                            pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                            item.ai_insights = data.ai_insights;
+                            item.insights_model = data.insights_model || null;
+                            const badge = document.getElementById(`insights-badge-${item.id}`);
+                            if (badge) badge.className = INSIGHTS_BADGE_READY;
+                        }
+                    } catch (e) { console.error(e); }
+                }, 5000);
+                pollingTimers.push(timer);
+            });
+
+            // Poll for articles that don't have tags yet (give up after ~5 min and
+            // settle the badge on "Other" so it doesn't pulse forever)
+            currentArticles.filter(a => !a.category_tag).forEach(item => {
+                let attempts = 0;
+                const timer = setInterval(async () => {
+                    if (++attempts > 100) {
+                        clearInterval(timer);
+                        pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                        const badge = document.getElementById(`tag-${item.id}`);
+                        if (badge) {
+                            badge.className = 'text-[10px] font-semibold bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded';
+                            badge.textContent = 'Other';
+                        }
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`${API_BASE}/tags/${item.id}`);
+                        const data = await res.json();
+                        if (data.ready) {
+                            clearInterval(timer);
+                            pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                            item.category_tag = data.category_tag || 'Other';
+                            item.topic_tags = Array.isArray(data.topic_tags) ? data.topic_tags : [];
+                            const badge = document.getElementById(`tag-${item.id}`);
+                            if (badge) {
+                                const color = CATEGORY_COLOR_MAP[item.category_tag] ?? 'bg-gray-100 text-gray-400';
+                                badge.className = `text-[10px] font-semibold ${color} px-1.5 py-0.5 rounded`;
+                                badge.textContent = item.category_tag;
+                            }
+                            const topicRow = document.getElementById(`topic-row-${item.id}`);
+                            if (topicRow) topicRow.innerHTML = renderTopicTags(item.topic_tags);
+                        }
+                    } catch (e) { console.error(e); }
+                }, 3000);
+                pollingTimers.push(timer);
+            });
+        }
+
+        function renderSearchResults(data) {
+            if (data.length === 0) {
+                searchResults.innerHTML = `<p class="text-center text-gray-400 text-sm pt-10">No feeds found.</p>`;
+                return;
+            }
+            searchResults.innerHTML = data.map(f => {
+                const folderNames = getFeedFolderNames(f.id);
+                const badge = folderNames.length
+                    ? folderNames.map(n => `<span class="text-[10px] bg-indigo-50 text-indigo-600 border border-indigo-200 px-1.5 py-0.5 rounded-full">${n}</span>`).join(' ')
+                    : `<span class="text-[10px] text-gray-300">Not Added</span>`;
+                return `
+                <div class="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-gray-50 gap-3">
+                    <div class="min-w-0"><p class="text-sm font-semibold text-gray-800 truncate">${f.name}</p><p class="text-[10px] text-gray-400 mt-0.5">${f.category}</p></div>
+                    <div class="flex flex-wrap gap-1 justify-end flex-shrink-0">${badge}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function openInsights(id) {
+            const item = currentArticles.find(a => a.id === id);
+            if (!item) return;
+            item.read = true; renderFeed();
+
+            const isFailed = item.ai_insights === 'Analysis failed briefly. Please try again later.';
+            let sparkleState = (item.ai_insights && !isFailed) ? 'ready' : 'idle';
+            let translatedContent = null; // { summary, _lang }
+
+            function renderSummaryArea() {
+                const area = document.getElementById('summary-area');
+                if (!area) return;
+                const text = (translationEnabled && translatedContent && translatedContent.summary)
+                    ? translatedContent.summary
+                    : (item.summary || 'Could not retrieve content.');
+                area.innerHTML = `<p class="text-[13px] text-gray-600 leading-relaxed">${text}</p>`;
+            }
+
+            function renderInsightsArea() {
+                const btn = document.getElementById('sparkle-btn');
+                const area = document.getElementById('insights-area');
+                if (!btn || !area) return;
+                if (sparkleState === 'loading') {
+                    btn.disabled = true;
+                    area.innerHTML = `
+                        <div class="flex flex-col items-center justify-center py-6 space-y-2">
+                            <div class="w-6 h-6 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                            <span class="text-xs text-gray-400">Generating Insights...</span>
+                        </div>`;
+                } else if (sparkleState === 'ready') {
+                    btn.disabled = true;
+                    btn.className = 'text-[10px] font-bold text-gray-300 cursor-default';
+                    const insightsText =
+                        (preferredLang === 'ja' && item.ai_insights_ja)
+                            ? item.ai_insights_ja
+                            : (translationEnabled && translatedContent && translatedContent.insights)
+                                ? translatedContent.insights
+                                : item.ai_insights;
+                    const modelLabel = item.insights_model
+                        ? `<p class="text-[10px] text-gray-400 mt-2 text-right">by ${item.insights_model}</p>`
+                        : '';
+                    area.innerHTML = `<p class="text-[15px] text-gray-700">${insightsText}</p>${modelLabel}`;
+                } else if (sparkleState === 'failed') {
+                    btn.disabled = false;
+                    area.innerHTML = `<p class="text-xs text-gray-400 py-4 text-center">Insights generation timed out. Please try Regenerate.</p>`;
+                }
+            }
+
+            async function applyTranslation(forceRefetch = false) {
+                if (!translationEnabled) {
+                    renderSummaryArea();
+                    renderInsightsArea();
+                    return;
+                }
+                // Use in-memory cache if same lang and not forced
+                if (!forceRefetch && translatedContent && translatedContent._lang === preferredLang) {
+                    renderSummaryArea();
+                    renderInsightsArea();
+                    return;
+                }
+                translatedContent = null;
+                const summaryEl = document.getElementById('summary-area');
+                if (summaryEl) {
+                    summaryEl.innerHTML = `<div class="flex items-center gap-2 py-2">
+                        <div class="w-4 h-4 border-2 border-gray-200 border-t-indigo-400 rounded-full animate-spin flex-shrink-0"></div>
+                        <span class="text-xs text-gray-400">Translating...</span>
+                    </div>`;
+                }
+                try {
+                    const res = await fetch(`${API_BASE}/translate/${id}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target_lang: preferredLang, engine: translationEngine })
+                    });
+                    const data = await res.json();
+                    translatedContent = { ...data, _lang: preferredLang };
+                } catch (e) {
+                    console.error('Translation failed:', e);
+                }
+                renderSummaryArea();
+                renderInsightsArea();
+            }
+
+            async function regenerateInsights() {
+                pollingTimers.forEach(clearInterval);
+                pollingTimers = [];
+                item.ai_insights = null;
+                translatedContent = null;
+                sparkleState = 'loading';
+                renderInsightsArea();
+
+                fetch(`${API_BASE}/analyze/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                    credentials: 'include'
+                }).catch(() => {});
+
+                let attempts = 0;
+                const timer = setInterval(async () => {
+                    if (++attempts > 300) {
+                        clearInterval(timer);
+                        pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                        sparkleState = 'failed';
+                        renderInsightsArea();
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`${API_BASE}/insights/${id}`);
+                        const data = await res.json();
+                        if (data.ready) {
+                            clearInterval(timer);
+                            pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                            item.ai_insights = data.ai_insights;
+                            item.insights_model = data.insights_model || null;
+                            sparkleState = 'ready';
+                            if (translationEnabled) {
+                                await applyTranslation(true);
+                            } else {
+                                renderInsightsArea();
+                            }
+                        }
+                    } catch (e) { console.error(e); }
+                }, 1000);
+                pollingTimers.push(timer);
+            }
+
+            // Register callback so the toggle/language buttons can trigger updates
+            activeDrawerApplyTranslation = applyTranslation;
+
+            drawerContent.innerHTML = `
+                <h3 class="text-xl font-bold mb-2">${(translationEnabled && titleCache.has(item.id)) ? titleCache.get(item.id) : item.title}</h3>
+                <p class="text-[11px] text-gray-400 mb-5">${shortenSource(item.source)} · ${formatBarcelonaTime(item.published_at)}</p>
+                <div class="bg-gray-50 rounded-xl p-4 border border-gray-100 mb-4">
+                    <label class="text-[10px] uppercase font-bold text-gray-400 block mb-2">RSS Summary</label>
+                    <div id="summary-area">
+                        <p class="text-[13px] text-gray-600 leading-relaxed">${item.summary || 'Could not retrieve content.'}</p>
+                    </div>
+                </div>
+                <div class="bg-indigo-50/30 rounded-xl p-5 border border-indigo-100/50 mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="text-[10px] uppercase font-bold text-indigo-600">Sift Insights</label>
+                        <div class="flex items-center gap-2">
+                            <button id="regenerate-btn" class="text-[10px] text-gray-400 hover:text-gray-600 transition-colors" title="Regenerate">↺ Regenerate</button>
+                            <button id="sparkle-btn" class="text-[10px] font-bold text-indigo-500 hover:text-indigo-700 transition-colors">✨ Insights</button>
+                        </div>
+                    </div>
+                    <div id="insights-area"></div>
+                </div>
+                <div class="flex gap-3 mb-6">
+                    <a href="https://www.google.com/search?q=${encodeURIComponent((translationEnabled && titleCache.has(item.id)) ? titleCache.get(item.id) : item.title)}&udm=50"
+                       target="_blank" rel="noopener noreferrer"
+                       class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors">
+                        <span>✨</span><span>AI Search</span>
+                    </a>
+                    <a href="${item.link}"
+                       target="_blank" rel="noopener noreferrer"
+                       class="flex-1 flex items-center justify-center gap-2 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold rounded-lg transition-colors">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                        <span>View Original</span>
+                    </a>
+                </div>
+                <div class="mb-2">
+                    <label class="text-[10px] uppercase font-bold text-indigo-600 block mb-3">Related Video</label>
+                    <div id="youtube-area">
+                        <div class="h-48 bg-gray-100 rounded-lg flex flex-col items-center justify-center space-y-2">
+                            <div class="w-8 h-8 border-4 border-gray-200 border-t-indigo-500 rounded-full animate-spin"></div>
+                            <span class="text-xs text-gray-400">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Sparkle button: show immediately if ready, otherwise ignored (polling handles it)
+            document.getElementById('sparkle-btn').addEventListener('click', () => {
+                if (sparkleState === 'ready') renderInsightsArea();
+            });
+
+            // Regenerate button: force re-generate insights
+            document.getElementById('regenerate-btn').addEventListener('click', () => {
+                if (sparkleState !== 'loading') regenerateInsights();
+            });
+
+            // Auto-start polling if insights not yet ready
+            if (sparkleState === 'idle') {
+                sparkleState = 'loading';
+                renderInsightsArea();
+                let attempts = 0;
+                const timer = setInterval(async () => {
+                    if (++attempts > 300) {
+                        clearInterval(timer);
+                        pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                        sparkleState = 'failed';
+                        renderInsightsArea();
+                        return;
+                    }
+                    try {
+                        const res = await fetch(`${API_BASE}/insights/${id}`);
+                        const data = await res.json();
+                        if (data.ready) {
+                            clearInterval(timer);
+                            pollingTimers.splice(pollingTimers.indexOf(timer), 1);
+                            item.ai_insights = data.ai_insights;
+                            item.ai_insights_ja = data.ai_insights_ja;
+                            item.category_tag = data.category_tag || 'Other';
+                            item.youtube_query = data.youtube_query;
+                            sparkleState = 'ready';
+                            if (translationEnabled) {
+                                await applyTranslation(true);
+                            } else {
+                                renderInsightsArea();
+                            }
+                        }
+                    } catch (e) { console.error(e); }
+                }, 1000);
+                pollingTimers.push(timer);
+            }
+
+            drawerOverlay.classList.remove('pointer-events-none');
+            drawerOverlay.classList.add('opacity-100');
+            insightsDrawer.classList.remove('drawer-hidden', 'drawer-visible');
+            insightsDrawer.classList.add('drawer-visible');
+            document.body.style.overflow = 'hidden';
+
+            // Kick off AI analysis if not yet done (server auto-generates; this is a fallback)
+            if (!item.ai_insights || isFailed) {
+                fetch(`${API_BASE}/analyze/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                    credentials: 'include'
+                }).catch(() => {});
+            }
+
+            // Apply translation (handles both summary and insights rendering)
+            if (translationEnabled) {
+                applyTranslation();
+            } else {
+                renderInsightsArea();
+            }
+
+            // YouTube polling
+            (async function pollYoutube(retries) {
+                try {
+                    const res = await fetch(`${API_BASE}/article/${id}/youtube`);
+                    const data = await res.json();
+                    const area = document.getElementById('youtube-area');
+                    if (!area) return;
+                    if (data.video_id) {
+                        area.innerHTML = `
+                            <div class="relative w-full" style="padding-top: 56.25%">
+                                <iframe class="absolute inset-0 w-full h-full rounded-lg"
+                                    src="https://www.youtube.com/embed/${data.video_id}?rel=0&modestbranding=1"
+                                    frameborder="0"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    allowfullscreen></iframe>
+                            </div>
+                        `;
+                    } else if (data.error === 'not_found' && retries > 0) {
+                        setTimeout(() => pollYoutube(retries - 1), 1000);
+                    } else {
+                        area.innerHTML = `
+                            <div class="h-48 bg-gray-100 rounded-lg flex flex-col items-center justify-center space-y-2 text-gray-400">
+                                <p class="text-xs">No related videos found</p>
+                                <a href="https://www.youtube.com/results?search_query=${encodeURIComponent(item.youtube_query || item.title)}"
+                                   target="_blank"
+                                   class="text-xs text-indigo-500 underline">Search on YouTube</a>
+                            </div>
+                        `;
+                    }
+                } catch (e) {
+                    const area = document.getElementById('youtube-area');
+                    if (area) area.innerHTML = `<div class="h-48 bg-gray-100 rounded-lg flex items-center justify-center text-xs text-gray-400">Failed to load video</div>`;
+                }
+            })(5);
+        }
+
+        closeInsightsBtn.addEventListener('click', () => {
+            activeDrawerApplyTranslation = null;
+            drawerOverlay.classList.add('pointer-events-none');
+            drawerOverlay.classList.remove('opacity-100');
+            insightsDrawer.classList.remove('drawer-visible');
+            insightsDrawer.classList.add('drawer-hidden');
+            document.body.style.overflow = '';
+        });
+
+        // --- Auth ---
+        async function fetchAuthState() {
+            try {
+                const res = await fetch('/auth/me', { credentials: 'include' });
+                authState = await res.json();
+            } catch (e) {
+                authState = { authenticated: false, is_owner: false };
+            }
+            updateAuthUI();
+        }
+
+        function updateAuthUI() {
+            document.getElementById('sidebar-user-name').textContent =
+                authState.display_name || 'Guest';
+            document.getElementById('sidebar-user-email').textContent =
+                authState.email || '';
+            const av = document.getElementById('sidebar-user-avatar');
+            if (authState.avatar_url) av.src = authState.avatar_url;
+
+            document.getElementById('sidebar-login-btn').classList.toggle('hidden', authState.authenticated);
+            document.getElementById('sidebar-logout-btn').classList.toggle('hidden', !authState.authenticated);
+
+            document.querySelectorAll('.owner-only').forEach(el =>
+                el.classList.toggle('hidden', !authState.is_owner));
+
+            renderSidebarFolders();
+        }
+
+        async function doLogout() {
+            await fetch('/auth/logout', { method: 'POST', credentials: 'include' });
+            authState = { authenticated: false, is_owner: false };
+            updateAuthUI();
+        }
+
+        // --- Folder Functions ---
+        async function fetchFolders() {
+            try {
+                const res = await fetch(`${API_BASE}/folders`);
+                folders = await res.json();
+                renderSidebarFolders();
+                renderTabs();
+                if (!activeTabId) {
+                    activeTabId = 'featured';
+                    renderTabs();
+                    fetchFeaturedNews();
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function fetchFolderArticles(folderId) {
+            if (currentFetchController) currentFetchController.abort();
+            currentFetchController = new AbortController();
+            const { signal } = currentFetchController;
+
+            const cacheKey = `folder-${folderId}`;
+            const cached = feedArticleCache.get(cacheKey);
+            if (cached && Date.now() - cached.ts < FEED_TTL) {
+                currentStacks = cached.stacks;
+                currentArticles = cached.articles;
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+                return;
+            }
+
+            feedContainer.innerHTML = Array(4).fill(0).map(() => `
+                <div class="p-4 flex gap-4 border-b border-gray-50 animate-pulse">
+                    <div class="flex-grow"><div class="h-3 bg-gray-100 rounded w-1/4 mb-2"></div><div class="h-4 bg-gray-100 rounded w-3/4 mb-1"></div><div class="h-4 bg-gray-100 rounded w-1/2"></div></div>
+                    <div class="w-[60px] h-[60px] bg-gray-100 rounded-lg"></div>
+                </div>`).join('');
+            try {
+                const res = await fetch(`${API_BASE}/folders/${folderId}/articles`, { signal });
+                const data = await res.json();
+                currentStacks = data.stacks;
+                currentArticles = data.stacks.flatMap(s => [s.main, ...s.related]);
+                if (currentArticles.length > 0) {
+                    feedArticleCache.set(cacheKey, { stacks: currentStacks, articles: currentArticles, ts: Date.now() });
+                }
+                renderFeed();
+                if (translationEnabled) fetchAndApplyTitleTranslation();
+            } catch (e) {
+                if (e.name === 'AbortError') return;
+                feedContainer.innerHTML = `<div class="p-10 text-center text-red-400 text-xs">Error: ${e.message}</div>`;
+            }
+        }
+
+        async function toggleFolderFavorite(folderId) {
+            try {
+                const res = await fetch(`${API_BASE}/folders/${folderId}/favorite`, { method: 'PATCH', credentials: 'include' });
+                const updated = await res.json();
+                const idx = folders.findIndex(f => f.id === folderId);
+                if (idx !== -1) folders[idx] = updated;
+                renderSidebarFolders();
+                renderTabs();
+            } catch (e) { console.error(e); }
+        }
+
+        function openFolderEdit(folderId) {
+            editingFolderId = folderId;
+            const view = document.getElementById('folder-edit-view');
+            const titleEl = document.getElementById('folder-edit-title');
+            const nameInput = document.getElementById('folder-name-input');
+            const deleteBtn = document.getElementById('folder-delete-btn');
+
+            if (folderId === null) {
+                titleEl.textContent = 'New Folder';
+                nameInput.value = '';
+                deleteBtn.classList.add('hidden');
+                renderFolderSources([], 'folder-sources-list');
+                renderFolderSources([], 'folder-tag-sources-list');
+                renderFolderTags([]);
+            } else {
+                const folder = folders.find(f => f.id === folderId);
+                if (!folder) return;
+                titleEl.textContent = 'Edit Folder';
+                nameInput.value = folder.name;
+                deleteBtn.classList.remove('hidden');
+                renderFolderSources(folder.target_sources || [], 'folder-sources-list');
+                renderFolderSources(folder.tag_sources || [], 'folder-tag-sources-list');
+                renderFolderTags(folder.target_tags || []);
+            }
+            toggleSidebar(false);
+            view.classList.remove('sidebar-hidden');
+            view.classList.add('sidebar-visible');
+        }
+
+        function closeFolderEdit() {
+            const view = document.getElementById('folder-edit-view');
+            view.classList.remove('sidebar-visible');
+            view.classList.add('sidebar-hidden');
+        }
+
+        function renderFolderSources(selectedIds, containerId = 'folder-sources-list') {
+            const container = document.getElementById(containerId);
+            if (!allMasterFeeds.length) {
+                container.innerHTML = '<p class="text-xs text-gray-400 p-2">Loading...</p>';
+                fetch(`${API_BASE}/search?q=`).then(r => r.json()).then(feeds => {
+                    allMasterFeeds = feeds;
+                    renderFolderSources(selectedIds, containerId);
+                });
+                return;
+            }
+            container.innerHTML = allMasterFeeds.map(f => `
+                <label class="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer">
+                    <input type="checkbox" value="${f.id}" ${selectedIds.includes(f.id) ? 'checked' : ''}
+                        class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0">
+                    <span class="text-sm text-gray-700 truncate">${f.name}</span>
+                    <span class="text-[10px] text-gray-400 ml-auto flex-shrink-0">${f.category}</span>
+                </label>`).join('');
+        }
+
+        const CATEGORY_EMOJI = {
+            "Technology":    "💻",
+            "Politics":      "🏛️",
+            "Business":      "💼",
+            "Economy":       "📈",
+            "Science":       "🔬",
+            "Health":        "🏥",
+            "Environment":   "🌿",
+            "Conflict":      "⚔️",
+            "Crime":         "🚨",
+            "Society":       "🧑‍🤝‍🧑",
+            "Education":     "🎓",
+            "Sports":        "🏆",
+            "Entertainment": "🎬",
+            "Regional":      "📍",
+            "Other":         "📰",
+        };
+
+        function getTopTopics(stacks, limit = 5) {
+            const counts = {};
+            stacks.forEach(({ main, related }) => {
+                [main, ...related].forEach(a => {
+                    (a.topic_tags || []).forEach(t => {
+                        counts[t] = (counts[t] || 0) + 1;
+                    });
+                });
+            });
+            return Object.entries(counts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, limit)
+                .map(([t]) => t);
+        }
+
+        const CATEGORIES = [
+            "Technology", "Politics", "Business", "Economy", "Science",
+            "Health", "Environment", "Conflict", "Crime", "Society",
+            "Education", "Sports", "Entertainment", "Regional", "Other"
+        ];
+
+        function renderFolderTags(selectedTags) {
+            const container = document.getElementById('folder-category-list');
+            container.innerHTML = CATEGORIES.map(cat => `
+                <label class="flex items-center gap-2 py-1 cursor-pointer">
+                    <input type="checkbox" id="cat-${cat}" value="${cat}"
+                        ${selectedTags.includes(cat) ? 'checked' : ''}
+                        class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0">
+                    <span class="text-sm text-gray-700">${cat}</span>
+                </label>`).join('');
+        }
+
+        function getFolderTags() {
+            return CATEGORIES.filter(cat => document.getElementById(`cat-${cat}`)?.checked);
+        }
+
+        function getFolderSources(containerId = 'folder-sources-list') {
+            return Array.from(document.querySelectorAll(`#${containerId} input[type=checkbox]:checked`)).map(el => parseInt(el.value));
+        }
+
+        async function saveFolderEdit() {
+            const name = document.getElementById('folder-name-input').value.trim();
+            if (!name) { alert('Please enter a folder name'); return; }
+            const body = {
+                name,
+                target_sources: getFolderSources('folder-sources-list'),
+                tag_sources: getFolderSources('folder-tag-sources-list'),
+                target_tags: getFolderTags()
+            };
+            try {
+                if (editingFolderId === null) {
+                    const res = await fetch(`${API_BASE}/folders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), credentials: 'include' });
+                    folders.push(await res.json());
+                } else {
+                    const res = await fetch(`${API_BASE}/folders/${editingFolderId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), credentials: 'include' });
+                    const updated = await res.json();
+                    const idx = folders.findIndex(f => f.id === editingFolderId);
+                    if (idx !== -1) folders[idx] = updated;
+                }
+                renderSidebarFolders();
+                renderTabs();
+                closeFolderEdit();
+            } catch (e) { console.error(e); alert('Failed to save'); }
+        }
+
+        async function confirmDeleteFolder() {
+            if (!confirm('Delete this folder?')) return;
+            try {
+                await fetch(`${API_BASE}/folders/${editingFolderId}`, { method: 'DELETE', credentials: 'include' });
+                folders = folders.filter(f => f.id !== editingFolderId);
+                if (activeTabId === `folder-${editingFolderId}`) switchTab('featured');
+                renderSidebarFolders();
+                renderTabs();
+                closeFolderEdit();
+            } catch (e) { console.error(e); }
+        }
+
+        // --- Reorder Screen ---
+        function openReorderScreen() {
+            const favs = folders.filter(f => f.is_favorite).sort((a, b) => a.sort_order - b.sort_order);
+            const list = document.getElementById('reorder-list');
+            list.innerHTML = favs.map((f, i) => `
+                <div class="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-4 py-3 cursor-grab active:cursor-grabbing select-none"
+                    draggable="true" data-id="${f.id}"
+                    ondragstart="reorderDragStart(event,${i})"
+                    ondragover="reorderDragOver(event)"
+                    ondrop="reorderDrop(event,${i})">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/></svg>
+                    <span class="text-sm text-gray-700 flex-grow">${f.name}</span>
+                </div>`).join('');
+            if (!favs.length) list.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">No favorite folders</p>';
+            toggleSidebar(false);
+            document.getElementById('reorder-view').classList.replace('sidebar-hidden', 'sidebar-visible');
+        }
+
+        function closeReorderScreen() {
+            document.getElementById('reorder-view').classList.replace('sidebar-visible', 'sidebar-hidden');
+        }
+
+        function reorderDragStart(e, idx) {
+            reorderDragSrc = idx;
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function reorderDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        }
+
+        function reorderDrop(e, targetIdx) {
+            e.preventDefault();
+            if (reorderDragSrc === targetIdx) return;
+            const list = document.getElementById('reorder-list');
+            const items = Array.from(list.children);
+            const src = items[reorderDragSrc];
+            const target = items[targetIdx];
+            if (reorderDragSrc < targetIdx) list.insertBefore(src, target.nextSibling);
+            else list.insertBefore(src, target);
+            reorderDragSrc = targetIdx;
+        }
+
+        async function saveReorder() {
+            const items = Array.from(document.querySelectorAll('#reorder-list [data-id]'));
+            const payload = items.map((el, i) => ({ id: parseInt(el.dataset.id), sort_order: i }));
+            try {
+                await fetch(`${API_BASE}/folders/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), credentials: 'include' });
+                payload.forEach(({ id, sort_order }) => {
+                    const f = folders.find(x => x.id === id);
+                    if (f) f.sort_order = sort_order;
+                });
+                renderSidebarFolders();
+                renderTabs();
+                closeReorderScreen();
+            } catch (e) { console.error(e); }
+        }
+
+        // --- Feeds List Screen ---
+        async function openFeedsList() {
+            toggleSidebar(false);
+            if (!allMasterFeeds.length) {
+                const res = await fetch(`${API_BASE}/search?q=`);
+                allMasterFeeds = await res.json();
+            }
+            renderFeedsList();
+            document.getElementById('feeds-list-view').classList.replace('sidebar-hidden', 'sidebar-visible');
+        }
+
+        function closeFeedsList() {
+            document.getElementById('feeds-list-view').classList.replace('sidebar-visible', 'sidebar-hidden');
+        }
+
+        function getFeedFolderNames(feedId) {
+            return folders
+                .filter(f => (f.target_sources || []).includes(feedId) || (f.tag_sources || []).includes(feedId))
+                .map(f => f.name);
+        }
+
+        function renderFeedsList() {
+            const el = document.getElementById('feeds-list-content');
+            if (!el) return;
+            if (!allMasterFeeds.length) {
+                el.innerHTML = '<p class="text-sm text-gray-400 text-center py-8">Loading...</p>';
+                return;
+            }
+            const byCategory = {};
+            allMasterFeeds.forEach(f => {
+                if (!byCategory[f.category]) byCategory[f.category] = [];
+                byCategory[f.category].push(f);
+            });
+            el.innerHTML = Object.entries(byCategory).map(([cat, feeds]) => `
+                <div class="mb-4">
+                    <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1 mb-1">${cat}</p>
+                    ${feeds.map(f => {
+                        const folderNames = getFeedFolderNames(f.id);
+                        const badge = folderNames.length
+                            ? folderNames.map(n => `<span class="text-[10px] bg-indigo-50 text-indigo-600 border border-indigo-200 px-1.5 py-0.5 rounded-full">${n}</span>`).join(' ')
+                            : `<span class="text-[10px] text-gray-300">Not Added</span>`;
+                        return `
+                        <div class="flex items-center justify-between px-2 py-2 rounded-xl hover:bg-gray-50 gap-3">
+                            <p class="text-sm text-gray-800 truncate">${f.name}</p>
+                            <div class="flex flex-wrap gap-1 justify-end flex-shrink-0">${badge}</div>
+                        </div>`;
+                    }).join('')}
+                </div>`).join('');
+        }
+
+        function openAddContent() {
+            searchView.classList.replace('sidebar-hidden', 'sidebar-visible');
+            searchInput.value = '';
+            activeCatFilter = '';
+            document.querySelectorAll('.cat-btn').forEach(b => {
+                const active = b.dataset.cat === '';
+                b.className = `cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border font-semibold transition-colors ${active ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-200 text-gray-500'}`;
+            });
+            search('');
+        }
+
+        closeSearch.addEventListener('click', () => {
+            searchView.classList.remove('sidebar-visible');
+            searchView.classList.add('sidebar-hidden');
+        });
+        searchInput.addEventListener('input', () => renderSearchResults(filteredFeeds()));
+
+        document.querySelectorAll('.cat-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                activeCatFilter = btn.dataset.cat;
+                document.querySelectorAll('.cat-btn').forEach(b => {
+                    const active = b.dataset.cat === activeCatFilter;
+                    b.className = `cat-btn flex-shrink-0 px-3 py-1 text-xs rounded-full border font-semibold transition-colors ${active ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-200 text-gray-500'}`;
+                });
+                renderSearchResults(filteredFeeds());
+            });
+        });
+
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW registration failed:', err));
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) return;
+            if (Date.now() - lastFetchTime < 30 * 1000) return;
+            lastFetchTime = Date.now();
+            feedArticleCache.delete(activeTabId === 'featured' ? 'featured' : activeTabId);
+            if (activeTabId === 'featured') {
+                fetchFeaturedNews();
+            } else if (String(activeTabId).startsWith('folder-')) {
+                const fid = parseInt(activeTabId.replace('folder-', ''));
+                if (viewMode === 'bytag') fetchFolderByTagData(fid);
+                else fetchFolderArticles(fid);
+            } else if (activeTabId) {
+                fetchNews(activeTabId);
+            }
+        });
+
+        // Start
+        updateTranslateBtn();
+        updateLangBtns();
+        updateEngineButtons(translationEngine);
+        fetchAuthState().then(() => fetchFolders());
+    </script>
+</body>
+</html>
