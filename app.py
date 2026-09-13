@@ -1,9 +1,14 @@
 import os
 import re
+import html
+# debug_page() assigns a local named `html`, which shadows the module inside that
+# function — import the escaper under its own name so it stays reachable there.
+from html import escape as html_escape
 import json
 import time
 import difflib
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 import requests
 import feedparser
@@ -17,7 +22,8 @@ from authlib.integrations.flask_client import OAuth
 from authlib.integrations.base_client.errors import OAuthError
 from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
-from models import db, User, MasterFeed, ArticleCache, Folder, ArticleTranslation, format_model_name
+from models import (db, User, MasterFeed, ArticleCache, Folder, ArticleTranslation,
+                    TranslationUsage, format_model_name)
 from master_feeds import MASTER_FEEDS
 from translation import translate_text, translate_titles as _translate_titles_batch
 from datetime import datetime, timedelta
@@ -89,20 +95,51 @@ google = oauth.register(
 
 OWNER_GOOGLE_ID = os.getenv('OWNER_GOOGLE_ID')
 
+# Google sign-in allowlist. Unset means nobody but the owner may sign in
+# (fail-closed): forgetting to set it must not leave the app open.
+ALLOWED_EMAILS = {
+    e.strip().lower()
+    for e in os.getenv('ALLOWED_EMAILS', '').split(',')
+    if e.strip()
+}
+
+
+def is_sign_in_allowed(google_id, email):
+    """The owner is matched by google_id so a missing ALLOWED_EMAILS can't lock them out."""
+    if OWNER_GOOGLE_ID and google_id == OWNER_GOOGLE_ID:
+        return True
+    return bool(email) and email.strip().lower() in ALLOWED_EMAILS
+
+
+def is_owner_request():
+    """Same check as @owner_required, usable outside a decorator."""
+    return bool(
+        current_user.is_authenticated
+        and OWNER_GOOGLE_ID
+        and current_user.google_id == OWNER_GOOGLE_ID
+    )
+
+
 def owner_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not current_user.is_authenticated:
             return jsonify({"error": "Authentication required"}), 401
-        if not OWNER_GOOGLE_ID or current_user.google_id != OWNER_GOOGLE_ID:
+        if not is_owner_request():
             return jsonify({"error": "Forbidden"}), 403
         return f(*args, **kwargs)
     return decorated
 
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 OPENROUTER_MODEL_INSIGHTS = os.getenv('OPENROUTER_MODEL_INSIGHTS', 'google/gemini-2.5-flash')
-OPENROUTER_MODEL_INSIGHTS_BATCH = os.getenv('OPENROUTER_MODEL_INSIGHTS_BATCH', 'google/gemma-3-27b-it')
+OPENROUTER_MODEL_INSIGHTS_BATCH = os.getenv('OPENROUTER_MODEL_INSIGHTS_BATCH', 'google/gemma-3-12b-it')
 OPENROUTER_MODEL_TAGS = os.getenv('OPENROUTER_MODEL_TAGS', 'google/gemma-3-12b-it')
+
+# Stored verbatim when insight generation fails, so it is not NULL and the article
+# drops out of the backfill. index.html matches this exact string to offer a retry —
+# keep the wording in sync if it ever changes.
+INSIGHTS_FAILURE_TEXT = "Analysis failed briefly. Please try again later."
+INSIGHTS_RETRY_WINDOW_HOURS = 6  # how long a failed article stays eligible for retry
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 YOUTUBE_API_KEY = os.getenv('YOUTUBE_API_KEY')
@@ -239,6 +276,7 @@ def migrate_db():
             print(f"DB migration: removed {result.rowcount} orphaned article_translation rows")
 
 ARTICLE_MAX_AGE_DAYS = 7  # retention horizon shared by cleanup and ingestion guard
+SUMMARY_MAX_CHARS = 800   # safety cap on a cleaned summary; real ones land well under it
 
 def cleanup_old_articles(max_days=ARTICLE_MAX_AGE_DAYS):
     """Delete ArticleCache rows (and their translations) older than max_days.
@@ -314,6 +352,28 @@ def parse_published_at(entry):
         except Exception:
             pass
     return None
+
+
+def clean_summary(raw):
+    """Strip markup and URLs out of an RSS summary before storing it.
+
+    Aggregator feeds (Google News above all) ship summaries that are ~2000 chars
+    of anchor tags wrapping base64-ish redirect URLs — 60% of the payload is URL
+    text carrying no meaning. That junk was being sent to the LLM three times per
+    article (tags + EN/JA insights) and, worse, dominated the first 500 chars fed
+    to the embedder, so story clustering was matching on noise instead of content.
+
+    Callers must keep passing the raw entry to extract_thumbnail(), which still
+    needs the original <img> markup.
+    """
+    if not raw:
+        return ''
+    text = re.sub(r'<[^>]+>', ' ', raw)
+    text = html.unescape(text)
+    text = re.sub(r'<[^>]+>', ' ', text)          # entity-encoded markup, now decoded
+    text = re.sub(r'https?://\S+', ' ', text)     # bare URLs left outside of tags
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text[:SUMMARY_MAX_CHARS]
 
 
 def extract_thumbnail(entry):
@@ -431,7 +491,7 @@ OUTPUT FORMAT (strict):
     }
 
 
-def generate_insights(title, content_snippet, lang=None, model=None):
+def generate_insights(title, content_snippet, lang=None, model=None, want_youtube_query=True):
     """Generate insights and YouTube query via OpenRouter."""
     if not OPENROUTER_API_KEY:
         return {
@@ -442,6 +502,10 @@ def generate_insights(title, content_snippet, lang=None, model=None):
     use_model = model or OPENROUTER_MODEL_INSIGHTS
     lang_names = {"ja": "Japanese", "en": "English", "es": "Spanish"}
     lang_instruction = f" Write the insights in {lang_names[lang]}." if lang in lang_names else ""
+    youtube_field = (
+        ',\n    "youtube_query": "Keyword for searching related videos on YouTube '
+        '(in the same language as the article)"' if want_youtube_query else ''
+    )
 
     prompt = f"""Analyze the following news article and return a JSON object.
 Title: {title}
@@ -449,8 +513,7 @@ Snippet: {content_snippet}
 
 Return format:
 {{
-    "insights": "A 2-sentence explanation of the background/context of this article.{lang_instruction}",
-    "youtube_query": "Keyword for searching related videos on YouTube (in the same language as the article)"
+    "insights": "A 2-sentence explanation of the background/context of this article.{lang_instruction}"{youtube_field}
 }}"""
 
     data = {
@@ -471,7 +534,7 @@ Return format:
         if hasattr(e, 'response') and e.response is not None:
             print(f"Insights Response body: {e.response.text[:300]}")
         return {
-            "insights": "Analysis failed briefly. Please try again later.",
+            "insights": INSIGHTS_FAILURE_TEXT,
             "youtube_query": title
         }
 
@@ -497,6 +560,11 @@ def auth_callback():
     except OAuthError:
         return redirect('/')
     info = token.get('userinfo') or google.userinfo()
+
+    # Reject before touching the DB: an unapproved visitor must not leave a
+    # users row behind (we don't want to hold third parties' account details).
+    if not is_sign_in_allowed(info['sub'], info.get('email')):
+        return redirect('/?auth_error=not_allowed')
 
     user = User.query.filter_by(google_id=info['sub']).first()
     if user is None:
@@ -613,7 +681,9 @@ def analyze_and_cache(article_id, title, summary, lang=None, model=None):
         use_model = model or OPENROUTER_MODEL_INSIGHTS
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_en = executor.submit(generate_insights, title, summary, lang='en', model=use_model)
-            future_ja = executor.submit(generate_insights, title, summary, lang='ja', model=use_model)
+            # Only the EN youtube_query is kept below, so don't pay to generate a JA one
+            future_ja = executor.submit(generate_insights, title, summary, lang='ja', model=use_model,
+                                        want_youtube_query=False)
             en_data = future_en.result()
             ja_data = future_ja.result()
         cached = ArticleCache.query.get(article_id)
@@ -699,6 +769,46 @@ _stacked_cache = None  # {'data': [...], 'ts': datetime}
 _feed_last_fetched = {}  # feed_id → datetime
 FEED_CACHE_TTL = 300  # 5 minutes
 
+# How many of a feed's newest entries to ingest per refresh cycle. Every ingested
+# article costs 1 tagging + 2 insight LLM calls, so wire-service feeds that publish
+# 300+ items a day dominate the bill; they carry a lower cap via master_feeds.py.
+DEFAULT_INGEST_LIMIT = 10
+_INGEST_LIMITS = {f["name"]: f["max_per_cycle"] for f in MASTER_FEEDS if "max_per_cycle" in f}
+
+# Scheduler observability. Display-only: nothing here feeds back into refresh
+# behavior. A single unhandled exception once killed the scheduler thread and
+# froze the feed for 6.5 days without the process dying, so /debug reports the
+# thread's liveness and the last swallowed exception.
+_scheduler_thread = None      # set by _start_scheduler, so /debug can call is_alive()
+_scheduler_cycles = 0         # loop iterations, including ones the TTL guard turned into no-ops
+_scheduler_errors = 0         # exceptions swallowed since start
+_scheduler_last_error = None  # {'at': datetime (UTC), 'where': str, 'trace': str}
+_last_ingest_at = None        # UTC time of the last cycle that actually saved an article
+_last_ingest_count = 0        # how many it saved
+
+
+def _record_scheduler_error(where):
+    """Log the current exception with its traceback and keep the last one for /debug.
+    Called from except blocks — including the scheduler loop's own — so it must never
+    raise, or it would kill the very thread it exists to protect."""
+    global _scheduler_errors, _scheduler_last_error
+    trace = traceback.format_exc()
+    _scheduler_errors += 1
+    _scheduler_last_error = {'at': datetime.utcnow(), 'where': where, 'trace': trace}
+    msg = f"[scheduler] Error in {where}:\n{trace}"
+    try:
+        print(msg, flush=True)
+    except UnicodeEncodeError:
+        # Feed names include Japanese ones; a console that can't encode them
+        # (cp1252 on Windows) must not be what takes the scheduler down.
+        print(msg.encode('ascii', 'backslashreplace').decode('ascii'), flush=True)
+    except Exception:
+        pass  # logging is never worth an exception escaping into an except block
+
+
+def _ingest_limit(master_feed):
+    return _INGEST_LIMITS.get(master_feed.name, DEFAULT_INGEST_LIMIT)
+
 
 def _fetch_and_cache_feed(master_feed_id):
     """Fetch a single feed by ID and cache any new articles. Safe to run in a thread."""
@@ -709,7 +819,7 @@ def _fetch_and_cache_feed(master_feed_id):
         feed = feedparser.parse(master_feed.rss_url)
         raw_lang = getattr(feed.feed, 'language', None)
         ingest_cutoff = datetime.utcnow() - timedelta(days=ARTICLE_MAX_AGE_DAYS)
-        for entry in feed.entries[:10]:
+        for entry in feed.entries[:_ingest_limit(master_feed)]:
             guid = entry.get('id') or entry.get('link')
             if ArticleCache.query.filter_by(guid=guid).first():
                 continue
@@ -718,12 +828,13 @@ def _fetch_and_cache_feed(master_feed_id):
                 continue  # already past the retention horizon; don't ingest
             entry_lang = getattr(entry, 'language', None) or raw_lang
             source_lang = entry_lang[:2].lower() if entry_lang else None
+            summary = clean_summary(entry.get('summary', ''))
             cached = ArticleCache(
                 feed_id=master_feed_id,
                 guid=guid,
                 title=entry.title,
                 link=entry.link,
-                summary=entry.get('summary', ''),
+                summary=summary,
                 published_at=pub or datetime.utcnow(),
                 thumbnail_url=extract_thumbnail(entry),
                 source_lang=source_lang
@@ -731,8 +842,8 @@ def _fetch_and_cache_feed(master_feed_id):
             db.session.add(cached)
             try:
                 db.session.commit()
-                _submit_ai_job('tag', tag_and_cache, cached.id, entry.title, entry.get('summary', ''))
-                _submit_ai_job('insights', analyze_and_cache, cached.id, entry.title, entry.get('summary', ''),
+                _submit_ai_job('tag', tag_and_cache, cached.id, entry.title, summary)
+                _submit_ai_job('insights', analyze_and_cache, cached.id, entry.title, summary,
                                None, OPENROUTER_MODEL_INSIGHTS_BATCH)
             except Exception:
                 db.session.rollback()
@@ -740,9 +851,13 @@ def _fetch_and_cache_feed(master_feed_id):
 
 def _refresh_featured_feeds():
     """Fetch RSS for all featured feeds and save new articles. Returns True if fetch ran."""
-    global _featured_last_fetched
+    global _featured_last_fetched, _last_ingest_at, _last_ingest_count
     now = datetime.utcnow()
     if _featured_last_fetched and (now - _featured_last_fetched).total_seconds() < FEATURED_REFRESH_INTERVAL:
+        # The scheduler prints "cycle starting/finished" either way, so without this
+        # line the log can't tell a TTL no-op apart from a cycle that fetched nothing.
+        remaining = FEATURED_REFRESH_INTERVAL - (now - _featured_last_fetched).total_seconds()
+        print(f"[scheduler] Skipped: TTL not elapsed ({remaining:.0f}s left).", flush=True)
         return False
 
     # Purge expired articles before fetching so cleanup can't race with
@@ -759,66 +874,106 @@ def _refresh_featured_feeds():
     # Collect feeds referenced in any folder (target_sources + tag_sources)
     folder_feed_ids = set()
     for folder in Folder.query.all():
-        for fid in (json.loads(folder.target_sources) if folder.target_sources else []):
-            folder_feed_ids.add(fid)
-        for fid in (json.loads(folder.tag_sources) if folder.tag_sources else []):
-            folder_feed_ids.add(fid)
+        try:
+            for fid in (json.loads(folder.target_sources) if folder.target_sources else []):
+                folder_feed_ids.add(fid)
+            for fid in (json.loads(folder.tag_sources) if folder.tag_sources else []):
+                folder_feed_ids.add(fid)
+        except Exception:
+            _record_scheduler_error(f"folder json: {folder.id}")
+            continue
     extra_feeds = MasterFeed.query.filter(
         MasterFeed.id.in_(folder_feed_ids - featured_ids)
     ).all() if folder_feed_ids - featured_ids else []
 
     all_feeds = featured_feeds + extra_feeds
     new_entries = []
+    fetch_errors = 0
     ingest_cutoff = datetime.utcnow() - timedelta(days=ARTICLE_MAX_AGE_DAYS)
 
     for master_feed in all_feeds:
-        feed = feedparser.parse(master_feed.rss_url)
-        raw_lang = getattr(feed.feed, 'language', None)
-        for entry in feed.entries[:10]:
-            guid = entry.get('id') or entry.get('link')
-            existing = ArticleCache.query.filter_by(guid=guid).first()
-            if existing:
-                dirty = False
-                if existing.thumbnail_url is None:
-                    existing.thumbnail_url = extract_thumbnail(entry)
-                    dirty = True
+        # feedparser.parse() hands back parse errors via `bozo`, but lets network-layer
+        # exceptions through — a publisher dropping the connection killed the scheduler
+        # thread on 2026-07-15 and froze the feed for 6.5 days. Contain it per feed so
+        # neither the thread nor the remaining feeds go down with it.
+        try:
+            feed = feedparser.parse(master_feed.rss_url)
+            raw_lang = getattr(feed.feed, 'language', None)
+            for entry in feed.entries[:_ingest_limit(master_feed)]:
+                # title/link are read as attributes below; an entry missing either would
+                # raise AttributeError rather than simply being skipped.
+                if not entry.get('title') or not entry.get('link'):
+                    continue
+                guid = entry.get('id') or entry.get('link')
+                existing = ArticleCache.query.filter_by(guid=guid).first()
+                if existing:
+                    dirty = False
+                    if existing.thumbnail_url is None:
+                        existing.thumbnail_url = extract_thumbnail(entry)
+                        dirty = True
+                    pub = parse_published_at(entry)
+                    if pub is not None and existing.published_at != pub:
+                        existing.published_at = pub
+                        dirty = True
+                    if dirty:
+                        try:
+                            db.session.commit()
+                        except Exception:
+                            db.session.rollback()
+                            _record_scheduler_error(f"update commit: {guid}")
+                    continue
                 pub = parse_published_at(entry)
-                if pub is not None and existing.published_at != pub:
-                    existing.published_at = pub
-                    dirty = True
-                if dirty:
-                    db.session.commit()
-                continue
-            pub = parse_published_at(entry)
-            if pub and pub < ingest_cutoff:
-                continue  # already past the retention horizon; don't ingest
-            is_dup = False
-            for _, dup_entry, _ in new_entries:
-                if difflib.SequenceMatcher(None, entry.title, dup_entry.title).ratio() >= 0.95:
-                    is_dup = True
-                    break
-            if not is_dup:
-                entry_lang = getattr(entry, 'language', None) or raw_lang
-                new_entries.append((master_feed.id, entry, entry_lang))
+                if pub and pub < ingest_cutoff:
+                    continue  # already past the retention horizon; don't ingest
+                is_dup = False
+                for _, dup_entry, _ in new_entries:
+                    if difflib.SequenceMatcher(None, entry.title, dup_entry.title).ratio() >= 0.95:
+                        is_dup = True
+                        break
+                if not is_dup:
+                    entry_lang = getattr(entry, 'language', None) or raw_lang
+                    new_entries.append((master_feed.id, entry, entry_lang))
+        except Exception:
+            db.session.rollback()  # a commit may have failed mid-feed, leaving the session dirty
+            fetch_errors += 1
+            _record_scheduler_error(f"feed fetch: {master_feed.name}")
+            continue
 
+    saved = 0
     for feed_id, entry, raw_lang in new_entries:
         guid = entry.get('id') or entry.get('link')
-        source_lang = raw_lang[:2].lower() if raw_lang else None
-        cached = ArticleCache(
-            feed_id=feed_id,
-            guid=guid,
-            title=entry.title,
-            link=entry.link,
-            summary=entry.get('summary', ''),
-            published_at=parse_published_at(entry) or datetime.utcnow(),
-            thumbnail_url=extract_thumbnail(entry),
-            source_lang=source_lang
-        )
-        db.session.add(cached)
-        db.session.commit()
-        _submit_ai_job('tag', tag_and_cache, cached.id, entry.title, entry.get('summary', ''))
-        _submit_ai_job('insights', analyze_and_cache, cached.id, entry.title, entry.get('summary', ''),
+        try:
+            source_lang = raw_lang[:2].lower() if raw_lang else None
+            summary = clean_summary(entry.get('summary', ''))
+            cached = ArticleCache(
+                feed_id=feed_id,
+                guid=guid,
+                title=entry.title,
+                link=entry.link,
+                summary=summary,
+                published_at=parse_published_at(entry) or datetime.utcnow(),
+                thumbnail_url=extract_thumbnail(entry),
+                source_lang=source_lang
+            )
+            db.session.add(cached)
+            db.session.commit()
+        except Exception:
+            # guid is UNIQUE, so two feeds carrying the same one in a cycle raise
+            # IntegrityError; SQLite lock contention lands here too. Drop this
+            # article and keep going rather than abandoning the cycle.
+            db.session.rollback()
+            _record_scheduler_error(f"insert: {guid}")
+            continue
+        saved += 1
+        _submit_ai_job('tag', tag_and_cache, cached.id, entry.title, summary)
+        _submit_ai_job('insights', analyze_and_cache, cached.id, entry.title, summary,
                        None, OPENROUTER_MODEL_INSIGHTS_BATCH)
+
+    print(f"[scheduler] Ingested {saved} new article(s) from {len(all_feeds)} feed(s), "
+          f"{fetch_errors} fetch error(s).", flush=True)
+    if saved:
+        _last_ingest_at = now
+        _last_ingest_count = saved
 
     # Backfill articles whose AI jobs were lost (e.g. dropped from the in-memory
     # queue by a restart). Covers ALL cached articles, featured feeds included.
@@ -829,14 +984,27 @@ def _refresh_featured_feeds():
         or_(ArticleCache.category_tag == None, ArticleCache.category_tag == '')
     ).order_by(ArticleCache.published_at.desc()).limit(TAGS_BACKFILL_PER_CYCLE).all()
     for article in untagged:
-        _submit_ai_job('tag', tag_and_cache, article.id, article.title, article.summary or '')
+        _submit_ai_job('tag', tag_and_cache, article.id, article.title, clean_summary(article.summary))
 
+    # A failed generation stores INSIGHTS_FAILURE_TEXT rather than NULL, so without
+    # the second clause the article would keep that message forever. Bounding the
+    # retry by article age caps it at a dozen attempts instead of every cycle for a
+    # week. ai_insights_ja is checked too: the fallback text is English either way,
+    # so an EN-succeeded/JA-failed article is only visible on that column.
+    retry_cutoff = datetime.utcnow() - timedelta(hours=INSIGHTS_RETRY_WINDOW_HOURS)
     uninsighted = ArticleCache.query.filter(
-        ArticleCache.ai_insights == None
+        or_(
+            ArticleCache.ai_insights == None,
+            and_(
+                or_(ArticleCache.ai_insights == INSIGHTS_FAILURE_TEXT,
+                    ArticleCache.ai_insights_ja == INSIGHTS_FAILURE_TEXT),
+                ArticleCache.published_at >= retry_cutoff,
+            ),
+        )
     ).order_by(ArticleCache.published_at.desc()).limit(INSIGHTS_BACKFILL_PER_CYCLE).all()
     for article in uninsighted:
-        _submit_ai_job('insights', analyze_and_cache, article.id, article.title, article.summary or '',
-                       None, OPENROUTER_MODEL_INSIGHTS_BATCH)
+        _submit_ai_job('insights', analyze_and_cache, article.id, article.title,
+                       clean_summary(article.summary), None, OPENROUTER_MODEL_INSIGHTS_BATCH)
 
     _featured_last_fetched = now
 
@@ -847,8 +1015,13 @@ def _refresh_featured_feeds_bg():
     """Run _refresh_featured_feeds in a background thread, then invalidate stacked cache."""
     global _featured_refresh_running, _stacked_cache
     try:
-        with app.app_context():
-            _refresh_featured_feeds()
+        try:
+            with app.app_context():
+                _refresh_featured_feeds()
+        except Exception:
+            # Also the entry point for the /debug/refresh and /api/refresh threads,
+            # so catching here keeps those from dying with "Exception in thread" too.
+            _record_scheduler_error('refresh-bg')
     finally:
         _stacked_cache = None
         _featured_refresh_running = False
@@ -875,16 +1048,27 @@ def _scheduler_loop():
     """Periodic server-side refresh: RSS fetch + AI job queueing + cleanup, then sleep.
     Replaces the old request-driven stale-while-revalidate — endpoints now only read
     what this loop has already prepared in the DB."""
-    global _featured_refresh_running
+    global _featured_refresh_running, _scheduler_cycles
     while True:
-        with _refresh_flag_lock:
-            already_running = _featured_refresh_running
+        # Last line of defense: this thread must outlive any single cycle. It died
+        # once (2026-07-15) and, because the process kept serving requests normally,
+        # nothing noticed until a manual restart 6.5 days later.
+        try:
+            _scheduler_cycles += 1
+            with _refresh_flag_lock:
+                already_running = _featured_refresh_running
+                if not already_running:
+                    _featured_refresh_running = True
             if not already_running:
-                _featured_refresh_running = True
-        if not already_running:
-            print("[scheduler] Feed refresh cycle starting...", flush=True)
-            _refresh_featured_feeds_bg()
-            print("[scheduler] Feed refresh cycle finished.", flush=True)
+                print("[scheduler] Feed refresh cycle starting...", flush=True)
+                _refresh_featured_feeds_bg()
+                print("[scheduler] Feed refresh cycle finished.", flush=True)
+        except Exception:
+            _record_scheduler_error('scheduler-loop')
+            # If we raised while the flag was up, clear it — otherwise every later
+            # cycle would see already_running and never refresh again.
+            with _refresh_flag_lock:
+                _featured_refresh_running = False
         time.sleep(FEATURED_REFRESH_INTERVAL)
 
 
@@ -892,9 +1076,11 @@ def _start_scheduler():
     # Under the werkzeug dev reloader the module is imported twice; only the
     # reloaded child (WERKZEUG_RUN_MAIN=true) should run the loop. In production
     # (gunicorn, single worker) neither env var is set and the loop starts here.
+    global _scheduler_thread
     if os.getenv('FLASK_ENV') == 'development' and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
         return
-    threading.Thread(target=_scheduler_loop, daemon=True, name='feed-scheduler').start()
+    _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name='feed-scheduler')
+    _scheduler_thread.start()
 
 
 _start_scheduler()
@@ -981,6 +1167,35 @@ def debug_page():
         last_str = 'Never'
         remaining_str = 'On next request'
 
+    # Scheduler liveness. The thread is a daemon inside a process that stays healthy
+    # without it, so a dead scheduler is invisible from the outside — hence this row.
+    if _scheduler_thread is None:
+        thread_str = '<span style="color:#999">not started</span>'
+    elif _scheduler_thread.is_alive():
+        thread_str = '<span style="color:#059669;font-weight:bold">alive</span>'
+    else:
+        thread_str = '<span style="color:#dc2626;font-weight:bold">DEAD</span>'
+
+    if _last_ingest_at:
+        ingest_str = ((_last_ingest_at + JST_OFFSET).strftime('%Y-%m-%d %H:%M:%S JST')
+                      + f' &nbsp;({_last_ingest_count} article(s))')
+    else:
+        ingest_str = 'Never'
+
+    # This page is built with f-strings and has no auto-escaping; a traceback holds
+    # angle brackets ("<module>", "<lambda>") that would break the markup.
+    if _scheduler_last_error:
+        err_at = (_scheduler_last_error['at'] + JST_OFFSET).strftime('%Y-%m-%d %H:%M:%S JST')
+        err_html = (
+            f'<p style="font-size:13px;color:#666"><strong>{err_at}</strong> in '
+            f'<code>{html_escape(_scheduler_last_error["where"])}</code></p>'
+            '<pre style="background:#fdf2f2;border:1px solid #f5c2c2;padding:10px;'
+            'border-radius:4px;font-size:12px;overflow-x:auto;white-space:pre-wrap">'
+            f'{html_escape(_scheduler_last_error["trace"])}</pre>'
+        )
+    else:
+        err_html = '<p style="color:#999;font-size:13px">None since start</p>'
+
     tag_source_feed_ids = set()
     for fo in folders:
         for fid in (json.loads(fo.tag_sources) if fo.tag_sources else []):
@@ -1051,11 +1266,18 @@ async function triggerRefresh() {{
 <table style="border-collapse:collapse">
 <tr><td style="{td}"><strong>_featured_last_fetched</strong></td><td style="{td}">{last_str}</td></tr>
 <tr><td style="{td}"><strong>Next refresh in</strong></td><td style="{td}">{remaining_str}</td></tr>
+<tr><td style="{td}"><strong>Scheduler thread</strong></td><td style="{td}">{thread_str}</td></tr>
+<tr><td style="{td}"><strong>Cycles run</strong></td><td style="{td}">{_scheduler_cycles}</td></tr>
+<tr><td style="{td}"><strong>Last ingest</strong></td><td style="{td}">{ingest_str}</td></tr>
+<tr><td style="{td}"><strong>Errors since start</strong></td><td style="{td}">{_scheduler_errors}</td></tr>
 <tr><td style="{td}"><strong>Untagged articles in tag_sources (total)</strong></td><td style="{td_r}">{total_untagged}</td></tr>
 </table>
 
 <h2>4. Tag generation (tag_sources feeds)</h2>
 {tag_tbl if tag_gen_rows else '<p style="color:#999;font-size:13px">No feeds registered as tag_sources</p>'}
+
+<h2>5. Last scheduler exception</h2>
+{err_html}
 </body></html>"""
 
     return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
@@ -1323,6 +1545,124 @@ def get_youtube_video(article_id):
 SUPPORTED_LANGS = {'ja', 'en', 'es', 'ko'}
 
 
+# ─── Visitor translation budget ──────────────────────────────────────────────
+# Translation is open to signed-out visitors, so it needs a spend ceiling. Two
+# tiers, both counted in characters actually sent to an engine (cache hits cost
+# nothing):
+#   Tier 1 protects the free quotas of the premium engines (DeepL, Google).
+#          Over budget, visitors are *downgraded* to Gemma rather than cut off —
+#          a hard stop would make the demo's translation look broken.
+#   Tier 2 is an absolute ceiling across all engines, including Gemma, and is
+#          the only case that refuses the request (429).
+# The owner bypasses both. All limits are env-tunable so they can be shrunk for
+# testing and adjusted in production without a redeploy.
+
+def _env_int(name, default):
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+TRANSLATION_PREMIUM_MONTH_CHARS  = _env_int('TRANSLATION_PREMIUM_MONTH_CHARS', 700_000)
+TRANSLATION_PREMIUM_DAY_CHARS    = _env_int('TRANSLATION_PREMIUM_DAY_CHARS', 100_000)
+TRANSLATION_PREMIUM_IP_DAY_CHARS = _env_int('TRANSLATION_PREMIUM_IP_DAY_CHARS', 40_000)
+TRANSLATION_TOTAL_DAY_CHARS      = _env_int('TRANSLATION_TOTAL_DAY_CHARS', 500_000)
+TRANSLATION_TOTAL_IP_DAY_CHARS   = _env_int('TRANSLATION_TOTAL_IP_DAY_CHARS', 150_000)
+
+
+def _visitor_ip():
+    """Real client IP. Cloudflare, when in front, puts it in CF-Connecting-IP;
+    ProxyFix's x_for=1 would otherwise yield the edge IP and collapse every
+    visitor into a single bucket."""
+    cf = request.headers.get('CF-Connecting-IP')
+    if cf:
+        return cf.split(',')[0].strip()[:45]
+    return (request.remote_addr or 'unknown')[:45]
+
+
+def _translation_buckets(now, ip):
+    """(key, limit, expires_at, tier) for every counter a request touches."""
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    month_start = day_start.replace(day=1)
+    month_end = (month_start + timedelta(days=32)).replace(day=1)
+    day, month = day_start.strftime('%Y-%m-%d'), month_start.strftime('%Y-%m')
+    return [
+        (f'total:day:{day}',           TRANSLATION_TOTAL_DAY_CHARS,      day_end,   'total'),
+        (f'total:ip:{ip}:day:{day}',   TRANSLATION_TOTAL_IP_DAY_CHARS,   day_end,   'total'),
+        (f'prem:day:{day}',            TRANSLATION_PREMIUM_DAY_CHARS,    day_end,   'premium'),
+        (f'prem:ip:{ip}:day:{day}',    TRANSLATION_PREMIUM_IP_DAY_CHARS, day_end,   'premium'),
+        (f'prem:month:{month}',        TRANSLATION_PREMIUM_MONTH_CHARS,  month_end, 'premium'),
+    ]
+
+
+def _purge_expired_usage(now):
+    deleted = TranslationUsage.query.filter(
+        TranslationUsage.expires_at <= now).delete(synchronize_session=False)
+    if deleted:
+        db.session.commit()
+
+
+def check_translation_budget(planned_chars):
+    """Decide how a visitor's translation request may be served.
+
+    Returns (engine, retry_after): 'auto' for the full fallback chain, 'gemma'
+    when downgraded, or None when the request must be refused with 429."""
+    if planned_chars <= 0 or is_owner_request():
+        return 'auto', 0
+
+    now = datetime.utcnow()
+    _purge_expired_usage(now)
+    buckets = _translation_buckets(now, _visitor_ip())
+    used = {
+        r.key: r.chars for r in
+        TranslationUsage.query.filter(
+            TranslationUsage.key.in_([b[0] for b in buckets])).all()
+    }
+
+    for key, limit, expires, tier in buckets:
+        if tier == 'total' and used.get(key, 0) + planned_chars > limit:
+            return None, max(1, int((expires - now).total_seconds()))
+    for key, limit, _expires, tier in buckets:
+        if tier == 'premium' and used.get(key, 0) + planned_chars > limit:
+            return 'gemma', 0
+    return 'auto', 0
+
+
+def record_translation_usage(planned_chars, engine):
+    """Charge the buckets. Premium counters only move when premium engines were
+    actually allowed — a downgraded request must not eat the DeepL/Google budget."""
+    if planned_chars <= 0 or is_owner_request():
+        return
+
+    now = datetime.utcnow()
+    for key, _limit, expires, tier in _translation_buckets(now, _visitor_ip()):
+        if tier == 'premium' and engine != 'auto':
+            continue
+        row = TranslationUsage.query.filter_by(key=key).first()
+        if row is None:
+            row = TranslationUsage(key=key, chars=0, expires_at=expires)
+            db.session.add(row)
+        row.chars += planned_chars
+    try:
+        db.session.commit()
+    except Exception as e:  # never fail a translation over bookkeeping
+        db.session.rollback()
+        print(f"[translation-budget] failed to record usage: {e}")
+
+
+def rate_limited_response(retry_after):
+    return jsonify({"error": "rate_limited", "retry_after": retry_after}), 429
+
+
+def visitor_engine(requested_engine, allowed_engine):
+    """Clamp the client-supplied engine. Visitors don't get to pick — otherwise
+    engine='google' would sidestep the Gemma downgrade entirely."""
+    if is_owner_request():
+        return requested_engine
+    return allowed_engine
+
+
 @app.route('/api/translate/<int:article_id>', methods=['POST'])
 def translate_article(article_id):
     """Translate article summary and insights. Results cached in ArticleTranslation per lang."""
@@ -1354,7 +1694,23 @@ def translate_article(article_id):
             insights_out = cached.ai_insights or ''
         return jsonify({"summary": tr.summary, "insights": insights_out})
 
-    engine = data.get('engine', 'auto')
+    # Budget check goes *after* the cache lookup: already-translated articles must
+    # keep rendering once the ceiling is hit, or the app just looks broken.
+    will_translate_insights = bool(
+        not has_native_ja
+        and needs_insights_translation
+        and cached.ai_insights
+        and (tr is None or tr.insights is None)
+    )
+    planned_chars = len(cached.summary or '')
+    if will_translate_insights:
+        planned_chars += len(cached.ai_insights or '')
+
+    allowed_engine, retry_after = check_translation_budget(planned_chars)
+    if allowed_engine is None:
+        return rate_limited_response(retry_after)
+
+    engine = visitor_engine(data.get('engine', 'auto'), allowed_engine)
     # Translation API auto-detects source language; no need for source_lang check
     result, engine_used = translate_text(cached.summary or '', target_lang, engine=engine)
     summary_ok = engine_used != "none"
@@ -1383,6 +1739,7 @@ def translate_article(article_id):
             tr.insights = insights_result
         db.session.commit()
 
+    record_translation_usage(planned_chars, allowed_engine)
     return jsonify({"summary": result, "insights": translated_insights})
 
 
@@ -1451,7 +1808,24 @@ def translate_titles():
     ]
     if to_translate:
         texts = [title_by_id[aid][:TITLE_TRANSLATE_MAX_CHARS] for aid in to_translate]
-        translated = _translate_titles_batch(texts, target_lang)
+
+        # Cached titles above cost nothing; only the misses are charged.
+        planned_chars = sum(len(t) for t in texts)
+        allowed_engine, retry_after = check_translation_budget(planned_chars)
+        if allowed_engine is None:
+            return rate_limited_response(retry_after)
+        if allowed_engine != 'auto':
+            # Batch titles have no cheap engine to fall back to — translation.py
+            # forces 'gemma' back to 'auto' because Gemma is too slow for a
+            # 500-title batch. So instead of spending premium quota that is
+            # already exhausted, leave the titles untranslated; article bodies
+            # still translate via the Gemma downgrade.
+            limited = _respond()
+            limited.headers['X-Translation-Limited'] = '1'
+            return limited
+
+        translated = _translate_titles_batch(texts, target_lang, engine=allowed_engine)
+        record_translation_usage(planned_chars, allowed_engine)
         if translated is None:
             # All engines failed — respond with originals but don't cache them
             return _respond()

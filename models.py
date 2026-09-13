@@ -160,3 +160,17 @@ class ArticleTranslation(db.Model):
     __table_args__ = (db.UniqueConstraint('article_id', 'lang', name='uq_article_lang'),)
 
     article = db.relationship('ArticleCache', back_populates='translations')
+
+
+class TranslationUsage(db.Model):
+    """Character counters for the visitor translation budget (see app.py).
+
+    One row per bucket, e.g. 'total:day:2026-07-28' or 'prem:month:2026-07'.
+    Windows differ in length (daily vs monthly), so each row carries its own
+    expires_at: purging by "older than the current window start" would delete
+    live monthly rows every time a daily bucket is checked."""
+    __tablename__ = 'translation_usage'
+    id         = db.Column(db.Integer, primary_key=True)
+    key        = db.Column(db.String(120), nullable=False, unique=True)
+    chars      = db.Column(db.Integer, default=0, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)

@@ -63,9 +63,21 @@
         .overlay-bg {
             background-color: rgba(0, 0, 0, 0.4);
         }
+        /* Owner-only controls stay visible to visitors so the feature is
+           discoverable, but are inert. The buttons also get `disabled`. */
+        .owner-locked {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body class="pb-20 overflow-x-hidden">
+    <!-- Notice banner (sign-in refusal, translation limit) -->
+    <div id="notice-banner" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-[200] max-w-[92vw] items-start gap-3 px-4 py-2.5 rounded-xl bg-gray-900 text-white shadow-lg">
+        <span id="notice-banner-text" class="text-xs leading-relaxed"></span>
+        <button onclick="hideNotice()" class="flex-shrink-0 text-white/60 hover:text-white text-xs leading-none pt-0.5" aria-label="Dismiss">&#10005;</button>
+    </div>
+
     <!-- Sidebar Overlay -->
     <div id="sidebar-overlay" class="fixed inset-0 z-[100] overlay-bg opacity-0 pointer-events-none transition-opacity duration-300"></div>
 
@@ -101,13 +113,16 @@
             <div>
                 <div class="px-3 flex items-center justify-between mb-2">
                     <h3 class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Folders</h3>
-                    <button onclick="openReorderScreen()" class="owner-only hidden text-[10px] text-indigo-500 font-semibold hover:text-indigo-700">Edit</button>
+                    <button onclick="openReorderScreen()" disabled class="owner-only owner-locked text-[10px] text-indigo-500 font-semibold hover:text-indigo-700">Edit</button>
                 </div>
                 <div id="sidebar-folders" class="space-y-0.5"></div>
-                <button onclick="openFolderEdit(null)" class="owner-only hidden mt-1 w-full flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors text-xs">
+                <button onclick="openFolderEdit(null)" disabled class="owner-only owner-locked mt-1 w-full flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors text-xs">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                     Add Folder
                 </button>
+                <p id="owner-only-note" class="px-3 pt-1 text-[10px] leading-snug text-gray-400">
+                    Owner only &mdash; folders are curated by the owner in this public demo.
+                </p>
             </div>
 
             <!-- FEEDS -->
@@ -124,7 +139,7 @@
         <div class="mt-auto p-4 border-t border-gray-200">
             <div class="flex items-center space-x-3 px-2 mb-3">
                 <div class="w-10 h-10 rounded-full overflow-hidden bg-gray-200 flex-shrink-0">
-                    <img id="sidebar-user-avatar" src="" alt="avatar" class="w-full h-full object-cover">
+                    <img id="sidebar-user-avatar" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239ca3af'%3E%3Cpath d='M12 12c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm0 2.5c-3.34 0-10 1.67-10 5V22h20v-2.5c0-3.33-6.66-5-10-5z'/%3E%3C/svg%3E" alt="avatar" class="w-full h-full object-cover">
                 </div>
                 <div class="min-w-0">
                     <p id="sidebar-user-name" class="text-xs font-bold text-gray-900 truncate">Guest</p>
@@ -303,6 +318,8 @@
         const closeInsightsBtn = document.getElementById('close-drawer');
         const drawerContent = document.getElementById('drawer-content');
 
+        const DEFAULT_AVATAR = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239ca3af'%3E%3Cpath d='M12 12c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm0 2.5c-3.34 0-10 1.67-10 5V22h20v-2.5c0-3.33-6.66-5-10-5z'/%3E%3C/svg%3E";
+
         let authState = { authenticated: false, is_owner: false };
         let activeTabId = null;
         let folders = [];
@@ -386,12 +403,28 @@
 
         // --- Translation Toggle ---
         const translateBtn = document.getElementById('translate-btn');
+        const TRANSLATION_LIMIT_MSG =
+            'Translation is limited for public visitors — showing the original text.';
+        let translationLimited = false;
+
+        // Titles are translated in bulk on load, so a per-item message would fire
+        // repeatedly. The toggle button carries the state instead.
+        function setTranslationLimited(limited) {
+            if (translationLimited === limited) return;
+            translationLimited = limited;
+            updateTranslateBtn();
+        }
 
         function updateTranslateBtn() {
-            if (translationEnabled) {
+            if (translationLimited) {
+                translateBtn.className = 'p-2 bg-gray-100 rounded-full text-gray-400 transition-colors';
+                translateBtn.title = TRANSLATION_LIMIT_MSG;
+            } else if (translationEnabled) {
                 translateBtn.className = 'p-2 bg-indigo-100 rounded-full text-indigo-600 transition-colors';
+                translateBtn.title = 'Translate';
             } else {
                 translateBtn.className = 'p-2 hover:bg-gray-100 rounded-full text-gray-500 hover:text-indigo-600 transition-colors';
+                translateBtn.title = 'Translate';
             }
         }
 
@@ -419,10 +452,18 @@
                     const res = await fetch(`${API_BASE}/translate-titles`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
                         body: JSON.stringify({ titles: toTranslate, target_lang: preferredLang })
                     });
-                    const data = await res.json();
-                    Object.entries(data).forEach(([id, title]) => titleCache.set(Number(id), title));
+                    // Must check before consuming: an error body is a plain object
+                    // too, and would otherwise land in titleCache as article titles.
+                    if (!res.ok) {
+                        setTranslationLimited(res.status === 429);
+                    } else {
+                        setTranslationLimited(res.headers.get('X-Translation-Limited') === '1');
+                        const data = await res.json();
+                        Object.entries(data).forEach(([id, title]) => titleCache.set(Number(id), title));
+                    }
                 } catch (e) {
                     console.error('Title translation failed:', e);
                 } finally {
@@ -561,13 +602,17 @@
             }
             el.innerHTML = folders.map(f => {
                 const starCls = f.is_favorite ? 'text-yellow-400' : 'text-gray-300 hover:text-yellow-400';
-                const ownerHidden = authState.is_owner ? '' : 'hidden';
+                // Visitors see the controls greyed out rather than hidden, so the
+                // feature is discoverable. The folder name keeps full contrast —
+                // it is a label, and dimming it would just hurt readability.
+                const lock = authState.is_owner ? '' : 'owner-locked';
+                const dis = authState.is_owner ? '' : 'disabled';
                 return `
                 <div class="group flex items-center w-full rounded-lg hover:bg-gray-100 transition-colors pr-1">
-                    <button onclick="toggleFolderFavorite(${f.id})" class="owner-only ${ownerHidden} flex-shrink-0 w-7 h-8 flex items-center justify-center ${starCls} transition-colors" title="Toggle Favorite">
+                    <button onclick="toggleFolderFavorite(${f.id})" ${dis} class="owner-only ${lock} flex-shrink-0 w-7 h-8 flex items-center justify-center ${starCls} transition-colors" title="Toggle Favorite">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
                     </button>
-                    <button onclick="openFolderEdit(${f.id})" class="owner-only ${ownerHidden} flex-grow text-left py-1.5 text-sm text-gray-700 truncate">${twemoji.parse(f.name)}</button>
+                    <button onclick="openFolderEdit(${f.id})" ${dis} class="owner-only-label flex-grow text-left py-1.5 text-sm text-gray-700 truncate ${dis ? 'cursor-default' : ''}">${twemoji.parse(f.name)}</button>
                 </div>`;
             }).join('');
         }
@@ -1107,6 +1152,7 @@
             const isFailed = item.ai_insights === 'Analysis failed briefly. Please try again later.';
             let sparkleState = (item.ai_insights && !isFailed) ? 'ready' : 'idle';
             let translatedContent = null; // { summary, _lang }
+            let translationRefused = false; // budget ceiling hit for this article
 
             function renderSummaryArea() {
                 const area = document.getElementById('summary-area');
@@ -1114,7 +1160,10 @@
                 const text = (translationEnabled && translatedContent && translatedContent.summary)
                     ? translatedContent.summary
                     : (item.summary || 'Could not retrieve content.');
-                area.innerHTML = `<p class="text-[13px] text-gray-600 leading-relaxed">${text}</p>`;
+                const notice = translationRefused
+                    ? `<p class="mt-2 text-[10px] text-gray-400 leading-relaxed">${TRANSLATION_LIMIT_MSG}</p>`
+                    : '';
+                area.innerHTML = `<p class="text-[13px] text-gray-600 leading-relaxed">${text}</p>${notice}`;
             }
 
             function renderInsightsArea() {
@@ -1171,10 +1220,15 @@
                     const res = await fetch(`${API_BASE}/translate/${id}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
                         body: JSON.stringify({ target_lang: preferredLang, engine: translationEngine })
                     });
-                    const data = await res.json();
-                    translatedContent = { ...data, _lang: preferredLang };
+                    translationRefused = res.status === 429;
+                    setTranslationLimited(translationRefused);
+                    if (res.ok) {
+                        const data = await res.json();
+                        translatedContent = { ...data, _lang: preferredLang };
+                    }
                 } catch (e) {
                     console.error('Translation failed:', e);
                 }
@@ -1385,6 +1439,42 @@
             document.body.style.overflow = '';
         });
 
+        // --- Notice Banner ---
+        let noticeTimer = null;
+
+        function showNotice(message, autoHideMs = 8000) {
+            const banner = document.getElementById('notice-banner');
+            document.getElementById('notice-banner-text').textContent = message;
+            // Toggle both classes rather than relying on `hidden` outranking `flex`
+            banner.classList.remove('hidden');
+            banner.classList.add('flex');
+            clearTimeout(noticeTimer);
+            if (autoHideMs) noticeTimer = setTimeout(hideNotice, autoHideMs);
+        }
+
+        function hideNotice() {
+            clearTimeout(noticeTimer);
+            const banner = document.getElementById('notice-banner');
+            banner.classList.add('hidden');
+            banner.classList.remove('flex');
+        }
+
+        // Sign-in refusal comes back as a query param from /auth/callback
+        (function handleAuthError() {
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('auth_error') === 'not_allowed') {
+                showNotice(
+                    'Sign-in is limited to the owner of this demo. You can browse everything without signing in.',
+                    12000
+                );
+            }
+            if (params.has('auth_error')) {
+                params.delete('auth_error');
+                const qs = params.toString();
+                history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
+            }
+        })();
+
         // --- Auth ---
         async function fetchAuthState() {
             try {
@@ -1402,13 +1492,21 @@
             document.getElementById('sidebar-user-email').textContent =
                 authState.email || '';
             const av = document.getElementById('sidebar-user-avatar');
-            if (authState.avatar_url) av.src = authState.avatar_url;
+            av.src = authState.avatar_url || DEFAULT_AVATAR;
 
             document.getElementById('sidebar-login-btn').classList.toggle('hidden', authState.authenticated);
             document.getElementById('sidebar-logout-btn').classList.toggle('hidden', !authState.authenticated);
 
-            document.querySelectorAll('.owner-only').forEach(el =>
-                el.classList.toggle('hidden', !authState.is_owner));
+            // Greyed out rather than hidden: visitors should see that folder
+            // management exists. The server already enforces this (@owner_required),
+            // so this is presentation only. Keyed on is_owner, never authenticated —
+            // a signed-in non-owner gets 403, so the controls must stay locked.
+            document.querySelectorAll('.owner-only').forEach(el => {
+                el.classList.toggle('owner-locked', !authState.is_owner);
+                el.disabled = !authState.is_owner;
+            });
+            document.getElementById('owner-only-note')
+                .classList.toggle('hidden', authState.is_owner);
 
             renderSidebarFolders();
         }

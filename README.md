@@ -6,7 +6,14 @@ SiftCast pulls articles from dozens of news and tech-blog RSS feeds, groups rela
 
 **Live:** https://siftcast.pekobit.com
 
-<!-- TODO: add screenshots -->
+<p align="center">
+  <img src=".github/screenshots/feed.webp" width="200" alt="Feed with clustered stories, category labels and topic tags">
+  <img src=".github/screenshots/insights-ja.webp" width="200" alt="AI insight for an article in Japanese">
+  <img src=".github/screenshots/insights-ko.webp" width="200" alt="The same AI insight translated into Korean">
+  <img src=".github/screenshots/folders.webp" width="200" alt="Sidebar with folders, display language and translation engine">
+</p>
+
+<p align="center"><sub>Clustered feed · the same article explained in Japanese and Korean · folders and translation settings, with the management controls greyed out for visitors.</sub></p>
 
 ## Features
 
@@ -17,7 +24,14 @@ SiftCast pulls articles from dozens of news and tech-blog RSS feeds, groups rela
 - **On-demand translation** — titles, summaries, and insights translate into Japanese, English, Spanish, or Korean via DeepL, with automatic fallback to Google Translate when the DeepL quota is exhausted; results are cached per language
 - **Custom folders** — combine "all articles from these sources" with "only these categories from those sources" filters, with favorites and drag-to-reorder
 - **PWA** — installable, with service-worker caching
-- **Google OAuth** — sign-in via Google; admin endpoints (feed refresh, batch analysis, debug dashboard) are restricted to the owner account
+- **Google OAuth** — sign-in via Google, restricted to an email allowlist (`ALLOWED_EMAILS`); admin endpoints (feed refresh, batch analysis, debug dashboard) are restricted to the owner account
+
+### Reading without an account
+
+Articles, stories, folders, and translation are all open to signed-out visitors — this is a public demo and there is no guest login to get in the way. Two things are scoped down for visitors:
+
+- **Feeds and folders are curated by the owner.** The master feed list and folders are shared state, not per-user data, so the management controls are shown greyed out rather than hidden. The server enforces this independently (`@owner_required`).
+- **Translation runs on a character budget.** Visitors share a daily and monthly allowance (per-IP and global). Past the first tier they are transparently downgraded to the cheap LLM engine rather than cut off; a hard ceiling beyond that returns `429`. Cached translations are always free, and the owner is exempt. All limits are `TRANSLATION_*` environment variables.
 
 ## How it works
 
@@ -84,3 +98,9 @@ cd ~/siftcast && git pull && sudo systemctl restart siftcast
 ```
 
 Certificate renewal is automatic via `certbot.timer`. Logs: `/var/log/siftcast/error.log`.
+
+## About this repository
+
+This is a public mirror of the private repository SiftCast is developed in. It is updated by snapshot, so the history here is one commit per sync rather than the development history, and a small number of files are not included. Issues and pull requests are welcome, but changes are applied upstream and arrive here with the next sync.
+
+Licensed under the [MIT License](LICENSE).

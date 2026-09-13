@@ -26,7 +26,7 @@ MASTER_FEEDS = [
     # ─────────────────────────────────────────────
     # 日本語メディア
     # ─────────────────────────────────────────────
-    {"name": "NHK ニュース",          "rss_url": "https://www3.nhk.or.jp/rss/news/cat0.xml",              "category": "Japan", "is_featured": False},
+    {"name": "NHK ニュース",          "rss_url": "https://www.nhk.or.jp/rss/news/cat0.xml",               "category": "Japan", "is_featured": False},
     {"name": "朝日新聞",              "rss_url": "http://rss.asahi.com/rss/asahi/newsheadlines.rdf",       "category": "Japan", "is_featured": False},
     {"name": "毎日新聞",              "rss_url": "https://mainichi.jp/rss/etc/mainichi-flash.rss",         "category": "Japan", "is_featured": False},
 
@@ -94,10 +94,13 @@ MASTER_FEEDS = [
     # ─────────────────────────────────────────────
     # 韓国語メディア
     # ─────────────────────────────────────────────
-    {"name": "Chosun Ilbo",           "rss_url": "https://www.chosun.com/arc/outboundfeeds/rss/?outputType=xml",    "category": "Korea", "is_featured": False},
+    # max_per_cycle: these two publish 300+ items a day each — over half of everything
+    # ingested — and every article costs 3 LLM calls. Neither is featured, and the feed
+    # tab only ever shows the newest 10, so a lower per-cycle cap costs little on screen.
+    {"name": "Chosun Ilbo",           "rss_url": "https://www.chosun.com/arc/outboundfeeds/rss/?outputType=xml",    "category": "Korea", "is_featured": False, "max_per_cycle": 3},
     {"name": "Donga Ilbo",            "rss_url": "https://rss.donga.com/total.xml",                                 "category": "Korea", "is_featured": False},
     {"name": "Hankyoreh",             "rss_url": "https://www.hani.co.kr/rss/",                                     "category": "Korea", "is_featured": False},
-    {"name": "Yonhap News",           "rss_url": "https://www.yna.co.kr/rss/news.xml",                              "category": "Korea", "is_featured": False},
+    {"name": "Yonhap News",           "rss_url": "https://www.yna.co.kr/rss/news.xml",                              "category": "Korea", "is_featured": False, "max_per_cycle": 3},
 
     # ─────────────────────────────────────────────
     # 台湾メディア（繁体字）
