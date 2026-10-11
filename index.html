@@ -739,9 +739,31 @@
             return `<span id="tag-${item.id}" class="text-[10px] font-semibold ${color} px-1.5 py-0.5 rounded">${item.category_tag}</span>`;
         }
 
+        // LLM 由来のタグには null などが混ざりうる（["#Trump", null, null]）ので、読むときは必ずここを通す
+        function tagsOf(item) {
+            return Array.isArray(item?.topic_tags)
+                ? item.topic_tags.filter(t => typeof t === 'string' && t)
+                : [];
+        }
+
+        // 1件のデータ不良でフィード全体が描画できなくなるのを防ぐ。失敗したカードはタイトルだけの簡易表示にする
+        function safeCardHtml(render, item, ...args) {
+            try {
+                return render(item, ...args);
+            } catch (e) {
+                console.error('Card render failed', item?.id, e);
+                if (!item || item.id == null) return '';
+                return `
+                <div class="px-2 py-1.5 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors" onclick="openInsights(${item.id})">
+                    <h3 data-article-id="${item.id}" class="text-sm font-semibold leading-snug text-gray-900 line-clamp-2">${item.title || ''}</h3>
+                </div>`;
+            }
+        }
+
         function topicTagsHtml(item) {
-            if (!item.topic_tags || item.topic_tags.length === 0) return '';
-            return item.topic_tags.map(t =>
+            const tags = tagsOf(item);
+            if (tags.length === 0) return '';
+            return tags.map(t =>
                 `<span data-topic="${item.id}" class="text-[10px] text-gray-400">${t}</span>`
             ).join('');
         }
@@ -783,12 +805,20 @@
         }
 
         function articleCardHtml(item) {
+            return safeCardHtml(renderArticleCard, item);
+        }
+
+        function stackCardHtml(main, related, opts = {}) {
+            return safeCardHtml(renderStackCard, main, related || [], opts);
+        }
+
+        function renderArticleCard(item) {
             const title = (translationEnabled && titleCache.has(item.id)) ? titleCache.get(item.id) : item.title;
             return `
                 <div class="px-2 py-1.5 border-b border-gray-50 cursor-pointer hover:bg-gray-50 transition-colors" onclick="openInsights(${item.id})">
                     <div class="flex items-center gap-1 overflow-hidden whitespace-nowrap mb-1">
                         ${categoryBadge(item)}
-                        <span id="topic-row-${item.id}" class="contents">${renderTopicTags(item.topic_tags)}</span>
+                        <span id="topic-row-${item.id}" class="contents">${renderTopicTags(tagsOf(item))}</span>
                         <span class="text-gray-300 text-xs flex-shrink-0">·</span>
                         <span class="text-purple-400 text-xs flex-shrink-0" style="pointer-events:none;">✦</span>
                         <span class="text-gray-400 text-xs truncate flex-1 min-w-0">${shortenSource(item.source)} · ${relativeTime(item.published_at)}</span>
@@ -806,7 +836,7 @@
                 </div>`;
         }
 
-        function stackCardHtml(main, related, opts = {}) {
+        function renderStackCard(main, related, opts) {
             const { showCategoryTag = true, extraShadow = false } = opts;
             const title = (translationEnabled && titleCache.has(main.id)) ? titleCache.get(main.id) : main.title;
             const hasRelated = related.length > 0;
@@ -819,12 +849,12 @@
             // A: 過半数ルールで共通タグを抽出
             const allArticles = [main, ...related];
             const tagCounts = {};
-            allArticles.forEach(a => (a.topic_tags || []).forEach(t => {
+            allArticles.forEach(a => tagsOf(a).forEach(t => {
                 const k = t.toLowerCase(); tagCounts[k] = (tagCounts[k] || 0) + 1;
             }));
             const majority = Math.ceil(allArticles.length / 2);
             const mainTagByLower = {};
-            (main.topic_tags || []).forEach(t => { mainTagByLower[t.toLowerCase()] = t; });
+            tagsOf(main).forEach(t => { mainTagByLower[t.toLowerCase()] = t; });
             const commonTagKeys = Object.entries(tagCounts)
                 .filter(([, c]) => c >= majority).map(([k]) => k);
             const commonKeySet = new Set(commonTagKeys);
@@ -841,18 +871,18 @@
 
             // メイン記事の非共通タグ（共通タグヘッダーに出ていないもの）
             const mainNonCommonTagsHtml = hasRelated
-                ? (main.topic_tags || [])
+                ? tagsOf(main)
                     .filter(t => !commonKeySet.has(t.toLowerCase()))
                     .map(t => `<span data-topic="${main.id}" class="text-[10px] text-gray-400">${t}</span>`)
                     .join('')
                 : topicTagsHtml(main);
 
             // B: 関連記事行（connecting line 用ドット付き）
-            const mainTagSet = new Set((main.topic_tags || []).map(t => t.toLowerCase()));
+            const mainTagSet = new Set(tagsOf(main).map(t => t.toLowerCase()));
             const relatedRows = related.map(rel => {
                 const relTitle = (translationEnabled && titleCache.has(rel.id)) ? titleCache.get(rel.id) : rel.title;
                 // 共通ヘッダーに出ていないが main と共通のタグを表示（追加の文脈）
-                const extraTagsHtml = (rel.topic_tags || [])
+                const extraTagsHtml = tagsOf(rel)
                     .filter(t => mainTagSet.has(t.toLowerCase()) && !commonKeySet.has(t.toLowerCase()))
                     .map(t => `<span class="text-[9px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium">${t}</span>`)
                     .join('');
@@ -890,7 +920,7 @@
                         <div class="px-4 py-1.5">
                             <div class="flex items-center gap-1 overflow-hidden whitespace-nowrap mb-1">
                                 ${showCategoryTag ? categoryBadge(main) : ''}
-                                <span id="topic-row-${main.id}" class="contents">${renderTopicTags(main.topic_tags)}</span>
+                                <span id="topic-row-${main.id}" class="contents">${renderTopicTags(tagsOf(main))}</span>
                                 <span class="text-gray-300 text-xs flex-shrink-0">·</span>
                                 <span class="text-purple-400 text-xs flex-shrink-0" style="pointer-events:none;">✦</span>
                                 <span class="text-gray-400 text-xs truncate flex-1 min-w-0">${shortenSource(main.source)} · ${relativeTime(main.published_at)}</span>
@@ -1118,7 +1148,7 @@
                                 badge.textContent = item.category_tag;
                             }
                             const topicRow = document.getElementById(`topic-row-${item.id}`);
-                            if (topicRow) topicRow.innerHTML = renderTopicTags(item.topic_tags);
+                            if (topicRow) topicRow.innerHTML = renderTopicTags(tagsOf(item));
                         }
                     } catch (e) { console.error(e); }
                 }, 3000);
@@ -1655,7 +1685,7 @@
             const counts = {};
             stacks.forEach(({ main, related }) => {
                 [main, ...related].forEach(a => {
-                    (a.topic_tags || []).forEach(t => {
+                    tagsOf(a).forEach(t => {
                         counts[t] = (counts[t] || 0) + 1;
                     });
                 });

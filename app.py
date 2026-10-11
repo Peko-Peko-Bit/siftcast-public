@@ -485,9 +485,11 @@ OUTPUT FORMAT (strict):
         except Exception as e:
             print(f"Tag Generation Error (attempt {attempt + 1}): {e}")
 
+    topic_tags = tags_data.get("topic_tags")
     return {
         "category_tag": tags_data.get("category_tag") if tags_data.get("category_tag") in VALID_CATEGORIES else "Other",
-        "topic_tags": tags_data.get("topic_tags", []) if isinstance(tags_data.get("topic_tags"), list) else []
+        # モデルが3枠を null で埋めて返すことがある（["#Trump", null, null]）ので文字列だけ残す
+        "topic_tags": [t.strip() for t in topic_tags if isinstance(t, str) and t.strip()] if isinstance(topic_tags, list) else []
     }
 
 

@@ -119,7 +119,9 @@ class ArticleCache(db.Model):
         if not self.topic_tags:
             return []
         try:
-            return json.loads(self.topic_tags)
+            tags = json.loads(self.topic_tags)
+            # 保存済みの行に null が混ざっている（["#Trump", null, null]）ので返す時にも除く
+            return [t for t in tags if isinstance(t, str) and t] if isinstance(tags, list) else []
         except (ValueError, TypeError):
             return [t.strip() for t in self.topic_tags.split(',') if t.strip()]
 
